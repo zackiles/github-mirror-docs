@@ -1,0 +1,5 @@
+collection: Test Docs
+
+mirrors:
+  - adapter: confluence
+    url: https://test.atlassian.net

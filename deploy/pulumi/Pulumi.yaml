@@ -1,0 +1,3 @@
+name: docs-mirror
+runtime: nodejs
+description: Provision docs-mirror across GitHub repositories

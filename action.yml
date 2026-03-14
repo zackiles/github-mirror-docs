@@ -1,0 +1,29 @@
+name: "docs-mirror"
+description: "Mirror GitHub repository documentation to Confluence, Linear, and other platforms"
+author: "docs-mirror"
+
+branding:
+  icon: "book-open"
+  color: "blue"
+
+inputs:
+  config:
+    description: "Path to the docs-mirror config file"
+    required: false
+    default: ".docs-mirror.yml"
+  deno-version:
+    description: "Deno version to use"
+    required: false
+    default: "2.x"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Deno
+      uses: denoland/setup-deno@v2
+      with:
+        deno-version: ${{ inputs.deno-version }}
+
+    - name: Run docs-mirror sync
+      shell: bash
+      run: deno run --allow-all ${{ github.action_path }}/src/cli.ts sync --config ${{ inputs.config }}

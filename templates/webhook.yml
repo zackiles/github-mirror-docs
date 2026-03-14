@@ -1,0 +1,144 @@
+# ============================================================================
+# docs-mirror: Generic Webhook Adapter Template
+# ============================================================================
+#
+# This template lets you mirror documentation to any CMS or platform that
+# has an HTTP API. Copy this file into your repository, fill out the
+# sections below, and reference it in your .docs-mirror.yml:
+#
+#   mirrors:
+#     - adapter: webhook
+#       template: .docs-mirror-webhook.yml
+#
+# Every endpoint below maps to an operation the sync engine needs. If your
+# CMS does not support an operation (e.g., locking pages), leave that
+# endpoint blank and the engine will skip it.
+#
+# Placeholders like {collection}, {slug}, {title}, {page_id} are replaced
+# at runtime with actual values from your config and frontmatter.
+#
+# ============================================================================
+
+# --- Authentication ---------------------------------------------------------
+#
+# Choose ONE auth method. The engine reads credentials from environment
+# variables — never put secrets directly in this file.
+#
+# Supported methods:
+#   bearer   — Authorization: Bearer <token>
+#   basic    — Authorization: Basic base64(<username>:<password>)
+#   header   — A custom header name + value (e.g., X-API-Key)
+#   none     — No authentication (for internal / localhost APIs)
+
+auth:
+  method: bearer                       # bearer | basic | header | none
+
+  # For "bearer":
+  token_env: WEBHOOK_TOKEN             # env var name containing the token
+
+  # For "basic":
+  # username_env: WEBHOOK_USERNAME     # env var name for username
+  # password_env: WEBHOOK_PASSWORD     # env var name for password
+
+  # For "header":
+  # header_name: X-API-Key            # the header name to set
+  # header_value_env: WEBHOOK_API_KEY  # env var name for the header value
+
+# --- Content format ---------------------------------------------------------
+#
+# How should the markdown body be sent to your CMS?
+#   markdown  — send the raw markdown as-is (e.g., Linear, Ghost, Dev.to)
+#   html      — convert markdown to HTML before sending (e.g., WordPress, Drupal)
+
+content_format: markdown               # markdown | html
+
+# --- Endpoints --------------------------------------------------------------
+#
+# Each endpoint maps to one adapter interface operation. Configure the HTTP
+# method, URL, and request body template for each.
+#
+# URLs can contain placeholders: {collection}, {slug}, {title}, {page_id}
+# Body templates use the same placeholders plus {content} for the page body.
+#
+# If your CMS uses a single "upsert" endpoint for both create and update,
+# set the same URL for both create_page and update_page.
+
+endpoints:
+
+  # Check if a collection (space, project, folder) exists.
+  # Should return 2xx if it exists. The engine uses this before creating.
+  get_collection:
+    method: GET
+    url: ""                            # e.g., https://cms.example.com/api/spaces/{collection}
+    # Expected: 200 if exists, 404 if not
+
+  # Create a new collection. Called only if get_collection returns 404.
+  create_collection:
+    method: POST
+    url: ""                            # e.g., https://cms.example.com/api/spaces
+    body: |
+      {
+        "name": "{collection}"
+      }
+    # Expected: 2xx on success. Response must include an "id" field (or
+    # configure id_path below to tell the engine where to find it).
+
+  # Look up an existing page by slug. Used for idempotent sync.
+  get_page:
+    method: GET
+    url: ""                            # e.g., https://cms.example.com/api/pages?slug={slug}&space={collection}
+    # Expected: 200 with page data if found, 404 if not.
+
+  # Create a new page.
+  create_page:
+    method: POST
+    url: ""                            # e.g., https://cms.example.com/api/pages
+    body: |
+      {
+        "title": "{title}",
+        "slug": "{slug}",
+        "space": "{collection}",
+        "parent": "{parent}",
+        "body": "{content}",
+        "tags": {tags}
+      }
+    # Expected: 2xx on success. Response must include the created page's ID.
+
+  # Update an existing page. {page_id} is resolved from the get_page response.
+  update_page:
+    method: PUT
+    url: ""                            # e.g., https://cms.example.com/api/pages/{page_id}
+    body: |
+      {
+        "title": "{title}",
+        "body": "{content}",
+        "tags": {tags}
+      }
+    # Expected: 2xx on success.
+
+  # (Optional) Lock a page from editing. Leave blank if unsupported.
+  lock_page:
+    method: ""
+    url: ""                            # e.g., PUT https://cms.example.com/api/pages/{page_id}/lock
+    body: ""
+
+# --- Response parsing -------------------------------------------------------
+#
+# Tell the engine where to find IDs and URLs in your API's JSON responses.
+# Uses dot-notation paths (e.g., "data.id", "result.url").
+
+response:
+  id_path: id                          # JSON path to the resource ID in create/get responses
+  url_path: url                        # JSON path to the page URL (for sync result logs)
+
+# --- Banner -----------------------------------------------------------------
+#
+# The banner is prepended to every page body before sending. It warns
+# readers that the page is mirrored and links back to the GitHub source.
+# Set to false to disable. The {source_url} and {edit_url} placeholders
+# are replaced with the actual GitHub links at runtime.
+#
+# For markdown content_format, this is a markdown blockquote.
+# For html content_format, this is an HTML div.
+
+banner: true
