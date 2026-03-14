@@ -1,0 +1,26 @@
+collection: Engineering Docs
+
+source:
+  include:
+    - README.md
+    - docs/**/*.md
+  exclude:
+    - docs/internal/**
+
+defaults:
+  publish: true
+  tags:
+    - engineering
+
+mirrors:
+  - adapter: confluence
+    url: https://acme.atlassian.net
+    collection: Eng Docs
+    root_page: acme/my-service
+    lock: true
+    banner: true
+
+  - adapter: linear
+    collection: Engineering
+    lock: false
+    banner: true

@@ -1,0 +1,31 @@
+name: CI
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.x"
+
+      - name: Type check
+        run: deno check src/**/*.ts
+
+      - name: Lint
+        run: deno lint src/ tests/
+
+      - name: Unit tests
+        run: deno test --allow-read --allow-env tests/engine_test.ts tests/frontmatter_test.ts tests/adapters/
+
+      - name: Smoke test
+        run: deno test --allow-all tests/smoke_test.ts
