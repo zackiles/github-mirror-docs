@@ -18,44 +18,37 @@ push to main → GitHub Action triggers → docs synced to all configured mirror
 
 Mirrors are **read-only projections**. The repo is always the source of truth. Each mirrored page includes a banner linking back to the GitHub source.
 
-## Install
+## Quick Start
 
-Install the standalone binary:
+Install and configure in a single command from your repo directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/docs-mirror/docs-mirror/main/install.sh | sh -s -- init
+```
+
+This downloads the binary, adds it to your PATH, and runs the interactive setup. You can also pass flags directly:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/docs-mirror/docs-mirror/main/install.sh | sh -s -- init --confluence-url https://acme.atlassian.net
+```
+
+Or install the binary separately and run init yourself:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/docs-mirror/docs-mirror/main/install.sh | sh
-```
-
-Or via npm:
-
-```bash
-npx docs-mirror --help
-```
-
-To uninstall the binary:
-
-```bash
-docs-mirror uninstall-binary
-```
-
-## Quick Start
-
-```bash
 docs-mirror init
 ```
 
-The interactive setup takes under two minutes:
-- Select which mirrors to configure (Confluence, Linear, or both)
-- Scan your repo for markdown files
-- Add frontmatter to discovered files
-- Generate `.docs-mirror.yml` config and the GitHub Actions workflow
-
-Then commit, push to `main`, and your first sync runs automatically.
-
-Non-interactive mode uses safe defaults:
+Via npm:
 
 ```bash
-docs-mirror init --non-interactive --adapter confluence --confluence-url https://acme.atlassian.net
+npx docs-mirror init
+```
+
+To uninstall:
+
+```bash
+docs-mirror uninstall-binary
 ```
 
 ## Supported Mirrors
@@ -108,13 +101,16 @@ docs-mirror uninstall                    # Remove config from this repo
 docs-mirror uninstall-binary             # Remove the binary from PATH
 ```
 
-All commands support `--non-interactive` for CI and scripting. Secrets can be passed as CLI flags (which take precedence over environment variables):
+Adapters are detected automatically from flags and environment variables — no `--adapter` flag needed:
 
 ```bash
+docs-mirror init --confluence-url https://acme.atlassian.net
 docs-mirror sync --confluence-email me@co.com --confluence-token tok123
 ```
 
-Run `docs-mirror --help` for the full flag reference.
+All commands support `--non-interactive` for CI and scripting. CLI flags always take precedence over environment variables. If `gh` CLI is available, secrets can be set automatically during init.
+
+Run `docs-mirror --help` for the full reference.
 
 ## GitHub Action
 

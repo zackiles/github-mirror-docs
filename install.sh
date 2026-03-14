@@ -81,20 +81,37 @@ setup_path() {
   fi
 }
 
+run_init() {
+  export PATH="$INSTALL_DIR:$PATH"
+  echo ""
+  echo "Running docs-mirror init..."
+  echo ""
+  exec "$INSTALL_DIR/docs-mirror" init "$@"
+}
+
 main() {
   detect_platform
   get_latest_version
   download
   setup_path
 
-  echo ""
-  echo "docs-mirror $VERSION installed to $INSTALL_DIR/docs-mirror"
-  echo ""
-  echo "Restart your shell or run:"
-  echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
-  echo ""
-  echo "Then run:"
-  echo "  docs-mirror --help"
+  COMMAND="$1"
+
+  if [ "$COMMAND" = "init" ]; then
+    shift
+    echo ""
+    echo "docs-mirror $VERSION installed to $INSTALL_DIR/docs-mirror"
+    run_init "$@"
+  else
+    echo ""
+    echo "docs-mirror $VERSION installed to $INSTALL_DIR/docs-mirror"
+    echo ""
+    echo "Restart your shell or run:"
+    echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+    echo ""
+    echo "Then run:"
+    echo "  docs-mirror init"
+  fi
 }
 
-main
+main "$@"
