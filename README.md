@@ -18,10 +18,30 @@ push to main → GitHub Action triggers → docs synced to all configured mirror
 
 Mirrors are **read-only projections**. The repo is always the source of truth. Each mirrored page includes a banner linking back to the GitHub source.
 
+## Install
+
+Install the standalone binary:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/docs-mirror/docs-mirror/main/install.sh | sh
+```
+
+Or via npm:
+
+```bash
+npx docs-mirror --help
+```
+
+To uninstall the binary:
+
+```bash
+docs-mirror uninstall-binary
+```
+
 ## Quick Start
 
 ```bash
-npx docs-mirror init
+docs-mirror init
 ```
 
 The interactive setup takes under two minutes:
@@ -31,6 +51,12 @@ The interactive setup takes under two minutes:
 - Generate `.docs-mirror.yml` config and the GitHub Actions workflow
 
 Then commit, push to `main`, and your first sync runs automatically.
+
+Non-interactive mode uses safe defaults:
+
+```bash
+docs-mirror init --non-interactive --adapter confluence --confluence-url https://acme.atlassian.net
+```
 
 ## Supported Mirrors
 
@@ -72,14 +98,23 @@ tags: ["onboarding", "setup"]
 
 The `init` command adds this automatically. See [Frontmatter Reference](docs/frontmatter.md) for all fields.
 
-## CLI Commands
+## CLI
 
 ```bash
-npx docs-mirror init          # Interactive setup
-npx docs-mirror sync          # Sync all files to all mirrors
-npx docs-mirror sync --dry-run # Preview without making changes
-npx docs-mirror uninstall     # Clean removal
+docs-mirror init                         # Interactive setup
+docs-mirror sync                         # Sync all files to all mirrors
+docs-mirror sync --dry-run               # Preview without making changes
+docs-mirror uninstall                    # Remove config from this repo
+docs-mirror uninstall-binary             # Remove the binary from PATH
 ```
+
+All commands support `--non-interactive` for CI and scripting. Secrets can be passed as CLI flags (which take precedence over environment variables):
+
+```bash
+docs-mirror sync --confluence-email me@co.com --confluence-token tok123
+```
+
+Run `docs-mirror --help` for the full flag reference.
 
 ## GitHub Action
 
