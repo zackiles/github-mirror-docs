@@ -6,10 +6,73 @@ import { parse as parseFrontmatter, inject, extractTitle, slugify } from "./fron
 import { sync } from "./engine.ts"
 
 const VERSION = "1.0.0"
+const IS_PRODUCTION = Deno.env.get("DOCS_MIRROR_PRODUCTION") === "true"
+
+interface GlobalFlags {
+  interactive: boolean
+  verbose: boolean
+  help: boolean
+  version: boolean
+}
+
+function parseGlobalFlags(args: string[]): { flags: GlobalFlags; rest: string[] } {
+  const flags: GlobalFlags = {
+    interactive: true,
+    verbose: false,
+    help: false,
+    version: false,
+  }
+  const rest: string[] = []
+
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case "--non-interactive":
+      case "--no-interactive":
+        flags.interactive = false
+        break
+      case "--interactive":
+        flags.interactive = true
+        break
+      case "--verbose":
+        flags.verbose = true
+        break
+      case "--help":
+      case "-h":
+        flags.help = true
+        break
+      case "--version":
+      case "-v":
+        flags.version = true
+        break
+      default:
+        rest.push(args[i])
+    }
+  }
+
+  if (!Deno.stdin.isTerminal()) {
+    flags.interactive = false
+  }
+
+  return { flags, rest }
+}
+
+function resolveEnv(cliValue: string | undefined, envName: string): string | undefined {
+  return cliValue ?? Deno.env.get(envName)
+}
+
+function readLine(message: string, defaultValue?: string): string | null {
+  const suffix = defaultValue ? ` [${defaultValue}]` : ""
+  Deno.stdout.writeSync(new TextEncoder().encode(`${message}${suffix}: `))
+  const buf = new Uint8Array(1024)
+  const n = Deno.stdin.readSync(buf)
+  if (n === null) return defaultValue ?? null
+  const input = new TextDecoder().decode(buf.subarray(0, n)).trim()
+  return input || defaultValue || null
+}
 
 async function main() {
-  const args = Deno.args
-  const command = args[0]
+  const { flags, rest } = parseGlobalFlags(Deno.args)
+  const command = rest[0]
 
   try {
     await loadEnv({ export: true })
@@ -17,22 +80,37 @@ async function main() {
     // .env file is optional
   }
 
+  if (flags.version) {
+    console.log(`docs-mirror v${VERSION}`)
+    return
+  }
+
+  if (flags.help && !command) {
+    printHelp()
+    return
+  }
+
   switch (command) {
     case "init":
-      await init()
+      await init(flags, rest.slice(1))
       break
     case "sync":
-      await runSync(args.slice(1))
+      await runSync(flags, rest.slice(1))
       break
     case "uninstall":
-      await uninstall()
+      await uninstall(flags, rest.slice(1))
+      break
+    case "uninstall-binary":
+      await uninstallBinary(flags)
+      break
+    case "--help":
+    case "-h":
+      printHelp()
       break
     case "--version":
     case "-v":
       console.log(`docs-mirror v${VERSION}`)
       break
-    case "--help":
-    case "-h":
     case undefined:
       printHelp()
       break
@@ -43,21 +121,84 @@ async function main() {
   }
 }
 
-async function init() {
+interface InitFlags {
+  confluenceUrl?: string
+  confluenceEmail?: string
+  confluenceToken?: string
+  linearApiKey?: string
+  collection?: string
+  exclude?: string
+  adapters: string[]
+}
+
+function parseInitFlags(args: string[]): InitFlags {
+  const result: InitFlags = { adapters: [] }
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case "--confluence-url":
+        result.confluenceUrl = args[++i]
+        break
+      case "--confluence-email":
+        result.confluenceEmail = args[++i]
+        break
+      case "--confluence-token":
+        result.confluenceToken = args[++i]
+        break
+      case "--linear-api-key":
+        result.linearApiKey = args[++i]
+        break
+      case "--collection":
+        result.collection = args[++i]
+        break
+      case "--exclude":
+        result.exclude = args[++i]
+        break
+      case "--adapter":
+        result.adapters.push(args[++i])
+        break
+    }
+  }
+  return result
+}
+
+async function init(global: GlobalFlags, args: string[]) {
   console.log(`\ndocs-mirror v${VERSION}\n`)
 
-  const adapters = await promptAdapters()
+  const initFlags = parseInitFlags(args)
+
+  let adapters: string[]
+  if (initFlags.adapters.length > 0) {
+    adapters = initFlags.adapters
+  } else if (global.interactive) {
+    adapters = promptAdapters()
+  } else {
+    adapters = ["confluence"]
+  }
+
   const adapterConfigs: Record<string, unknown>[] = []
 
   if (adapters.includes("confluence")) {
-    const url = await prompt("Confluence base URL") ?? ""
+    let url: string
+    if (global.interactive) {
+      url = readLine("Confluence base URL", initFlags.confluenceUrl ?? "") ?? ""
+    } else {
+      url = initFlags.confluenceUrl ?? ""
+    }
     adapterConfigs.push({ adapter: "confluence", url })
   }
   if (adapters.includes("linear")) {
     adapterConfigs.push({ adapter: "linear" })
   }
 
-  const collection = (await prompt("Default collection name (Confluence Space / Linear Project)")) ?? "Engineering Docs"
+  let collection: string
+  if (global.interactive) {
+    collection = readLine(
+      "Default collection name (Confluence Space / Linear Project)",
+      initFlags.collection ?? "Engineering Docs",
+    ) ?? "Engineering Docs"
+  } else {
+    collection = initFlags.collection ?? "Engineering Docs"
+  }
 
   console.log("\nScanning for markdown files...\n")
 
@@ -82,19 +223,26 @@ async function init() {
     console.log(`  ${f.rel.padEnd(30)} → title: "${f.title}" (${source})`)
   }
 
-  const excludeInput = await prompt("\nExclude any paths from mirroring? (glob pattern, or blank)")
+  let excludeInput: string | null = null
+  if (initFlags.exclude) {
+    excludeInput = initFlags.exclude
+  } else if (global.interactive) {
+    excludeInput = readLine("\nExclude any paths from mirroring? (glob pattern, or blank)")
+  }
   const excludes = excludeInput ? [excludeInput] : []
 
   const filteredFiles = excludes.length > 0
     ? files.filter((f) => !excludes.some((e) => f.rel.match(globToRegex(e))))
     : files
 
-  const confirmInput = await prompt(
-    `\nAdd frontmatter to ${filteredFiles.length} files and create config? (Y/n)`,
-  )
-  if (confirmInput?.toLowerCase() === "n") {
-    console.log("Aborted.")
-    return
+  if (global.interactive) {
+    const confirm = readLine(
+      `\nAdd frontmatter to ${filteredFiles.length} files and create config? (Y/n)`,
+    )
+    if (confirm?.toLowerCase() === "n") {
+      console.log("Aborted.")
+      return
+    }
   }
 
   let injected = 0
@@ -149,16 +297,19 @@ async function init() {
   )
 }
 
-async function runSync(args: string[]) {
-  const options: {
-    adapter?: string
-    dryRun: boolean
-    verbose: boolean
-    files: string[]
-    configPath: string
-  } = {
+interface SyncFlags {
+  adapter?: string
+  dryRun: boolean
+  files: string[]
+  configPath: string
+  confluenceEmail?: string
+  confluenceToken?: string
+  linearApiKey?: string
+}
+
+function parseSyncFlags(args: string[]): SyncFlags {
+  const result: SyncFlags = {
     dryRun: false,
-    verbose: false,
     files: [],
     configPath: ".docs-mirror.yml",
   }
@@ -166,32 +317,51 @@ async function runSync(args: string[]) {
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
       case "--adapter":
-        options.adapter = args[++i]
+        result.adapter = args[++i]
         break
       case "--dry-run":
-        options.dryRun = true
-        break
-      case "--verbose":
-        options.verbose = true
+        result.dryRun = true
         break
       case "--config":
-        options.configPath = args[++i]
+        result.configPath = args[++i]
+        break
+      case "--confluence-email":
+        result.confluenceEmail = args[++i]
+        break
+      case "--confluence-token":
+        result.confluenceToken = args[++i]
+        break
+      case "--linear-api-key":
+        result.linearApiKey = args[++i]
         break
       default:
         if (!args[i].startsWith("--")) {
-          options.files.push(args[i])
+          result.files.push(args[i])
         }
     }
   }
+  return result
+}
+
+async function runSync(global: GlobalFlags, args: string[]) {
+  const syncFlags = parseSyncFlags(args)
+
+  const confluenceEmail = resolveEnv(syncFlags.confluenceEmail, "CONFLUENCE_EMAIL")
+  const confluenceToken = resolveEnv(syncFlags.confluenceToken, "CONFLUENCE_TOKEN")
+  const linearApiKey = resolveEnv(syncFlags.linearApiKey, "LINEAR_API_KEY")
+
+  if (confluenceEmail) Deno.env.set("CONFLUENCE_EMAIL", confluenceEmail)
+  if (confluenceToken) Deno.env.set("CONFLUENCE_TOKEN", confluenceToken)
+  if (linearApiKey) Deno.env.set("LINEAR_API_KEY", linearApiKey)
 
   console.log(`docs-mirror v${VERSION} — sync\n`)
 
   const results = await sync({
-    configPath: options.configPath,
-    dryRun: options.dryRun,
-    verbose: options.verbose,
-    adapter: options.adapter,
-    files: options.files.length > 0 ? options.files : undefined,
+    configPath: syncFlags.configPath,
+    dryRun: syncFlags.dryRun,
+    verbose: global.verbose,
+    adapter: syncFlags.adapter,
+    files: syncFlags.files.length > 0 ? syncFlags.files : undefined,
   })
 
   console.log("\nSync complete:")
@@ -209,12 +379,57 @@ async function runSync(args: string[]) {
   if (anyFailed) Deno.exit(1)
 }
 
-async function uninstall() {
+interface UninstallFlags {
+  removeWorkflow?: boolean
+  removeConfig?: boolean
+  stripFrontmatter?: boolean
+}
+
+function parseUninstallFlags(args: string[]): UninstallFlags {
+  const result: UninstallFlags = {}
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case "--remove-workflow":
+        result.removeWorkflow = true
+        break
+      case "--keep-workflow":
+        result.removeWorkflow = false
+        break
+      case "--remove-config":
+        result.removeConfig = true
+        break
+      case "--keep-config":
+        result.removeConfig = false
+        break
+      case "--strip-frontmatter":
+        result.stripFrontmatter = true
+        break
+    }
+  }
+  return result
+}
+
+async function uninstall(global: GlobalFlags, args: string[]) {
   console.log(`\ndocs-mirror — uninstall\n`)
 
-  const removeWorkflow = (await prompt("Remove .github/workflows/docs-mirror.yml? (Y/n)"))?.toLowerCase() !== "n"
-  const removeConfig = (await prompt("Remove .docs-mirror.yml? (Y/n)"))?.toLowerCase() !== "n"
-  const stripFm = (await prompt("Strip docs-mirror frontmatter from markdown files? (y/N)"))?.toLowerCase() === "y"
+  const uninstallFlags = parseUninstallFlags(args)
+
+  let removeWorkflow: boolean
+  let removeConfig: boolean
+  let stripFm: boolean
+
+  if (global.interactive) {
+    removeWorkflow = uninstallFlags.removeWorkflow ??
+      (readLine("Remove .github/workflows/docs-mirror.yml? (Y/n)")?.toLowerCase() !== "n")
+    removeConfig = uninstallFlags.removeConfig ??
+      (readLine("Remove .docs-mirror.yml? (Y/n)")?.toLowerCase() !== "n")
+    stripFm = uninstallFlags.stripFrontmatter ??
+      (readLine("Strip docs-mirror frontmatter from markdown files? (y/N)")?.toLowerCase() === "y")
+  } else {
+    removeWorkflow = uninstallFlags.removeWorkflow ?? true
+    removeConfig = uninstallFlags.removeConfig ?? true
+    stripFm = uninstallFlags.stripFrontmatter ?? false
+  }
 
   if (removeWorkflow) {
     try {
@@ -260,48 +475,101 @@ async function uninstall() {
   console.log("     Delete them manually if desired, or they will remain as a snapshot.")
 }
 
+async function uninstallBinary(_global: GlobalFlags) {
+  console.log("\ndocs-mirror — uninstall binary\n")
+
+  const home = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? ""
+  const isWindows = Deno.build.os === "windows"
+  const candidates = isWindows
+    ? [
+      `${home}\\.docs-mirror\\bin\\docs-mirror.exe`,
+      `${Deno.env.get("LOCALAPPDATA") ?? ""}\\docs-mirror\\bin\\docs-mirror.exe`,
+    ]
+    : [
+      `${home}/.docs-mirror/bin/docs-mirror`,
+      "/usr/local/bin/docs-mirror",
+    ]
+
+  let removed = false
+  for (const path of candidates) {
+    if (!path) continue
+    try {
+      await Deno.stat(path)
+      await Deno.remove(path)
+      console.log(`✔ Removed ${path}`)
+      removed = true
+    } catch {
+      // path doesn't exist
+    }
+  }
+
+  if (!removed) {
+    console.log("No production binary found in standard locations.")
+    console.log("Checked:")
+    for (const p of candidates) {
+      if (p) console.log(`  ${p}`)
+    }
+  }
+}
+
 function printHelp() {
   console.log(`
-docs-mirror v${VERSION}
+docs-mirror v${VERSION}${IS_PRODUCTION ? " (production)" : ""}
 
 Usage:
-  docs-mirror init                 Interactive setup
-  docs-mirror sync [options]       Sync documentation to mirrors
-  docs-mirror uninstall            Remove docs-mirror from this repo
+  docs-mirror <command> [options]
+
+Commands:
+  init                 Interactive setup
+  sync [options]       Sync documentation to mirrors
+  uninstall            Remove docs-mirror config from this repo
+  uninstall-binary     Remove the docs-mirror binary from PATH
+
+Global options:
+  --interactive        Force interactive mode (default when TTY)
+  --non-interactive    Disable prompts, use defaults
+  --verbose            Show detailed output
+  --version, -v        Print version
+  --help, -h           Print help
+
+Init options:
+  --adapter <name>           Add adapter (confluence, linear, webhook). Repeatable.
+  --confluence-url <url>     Confluence base URL
+  --confluence-email <email> Confluence email (overrides CONFLUENCE_EMAIL env)
+  --confluence-token <token> Confluence API token (overrides CONFLUENCE_TOKEN env)
+  --linear-api-key <key>     Linear API key (overrides LINEAR_API_KEY env)
+  --collection <name>        Collection name (default: Engineering Docs)
+  --exclude <glob>           Exclude glob pattern
 
 Sync options:
-  --adapter <name>    Sync to a specific adapter only
-  --dry-run           Show what would happen without making changes
-  --verbose           Show detailed output
-  --config <path>     Path to config file (default: .docs-mirror.yml)
-  <file>              Sync a specific file
+  --adapter <name>           Sync to a specific adapter only
+  --dry-run                  Show what would happen without making changes
+  --config <path>            Path to config file (default: .docs-mirror.yml)
+  --confluence-email <email> Confluence email (overrides CONFLUENCE_EMAIL env)
+  --confluence-token <token> Confluence API token (overrides CONFLUENCE_TOKEN env)
+  --linear-api-key <key>     Linear API key (overrides LINEAR_API_KEY env)
+  <file>                     Sync a specific file
+
+Uninstall options:
+  --remove-workflow          Remove workflow file (default in non-interactive)
+  --keep-workflow            Keep workflow file
+  --remove-config            Remove config file (default in non-interactive)
+  --keep-config              Keep config file
+  --strip-frontmatter        Strip frontmatter from markdown files
 `)
 }
 
-async function promptAdapters(): Promise<string[]> {
+function promptAdapters(): string[] {
   const adapters: string[] = []
-  const confInput = await prompt("Configure Confluence mirror? (Y/n)")
+  const confInput = readLine("Configure Confluence mirror? (Y/n)")
   if (confInput?.toLowerCase() !== "n") adapters.push("confluence")
-  const linearInput = await prompt("Configure Linear mirror? (Y/n)")
+  const linearInput = readLine("Configure Linear mirror? (Y/n)")
   if (linearInput?.toLowerCase() !== "n") adapters.push("linear")
   if (adapters.length === 0) {
     console.log("No adapters selected. At least one is required.")
     Deno.exit(1)
   }
   return adapters
-}
-
-function prompt(message: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const buf = new Uint8Array(1024)
-    Deno.stdout.writeSync(new TextEncoder().encode(`${message}: `))
-    const n = Deno.stdin.readSync(buf)
-    if (n === null) {
-      resolve(null)
-      return
-    }
-    resolve(new TextDecoder().decode(buf.subarray(0, n)).trim())
-  })
 }
 
 function buildConfig(
