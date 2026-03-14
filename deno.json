@@ -9,8 +9,9 @@
     "fmt": "deno fmt",
     "check": "deno check src/**/*.ts",
     "compile": "deno compile --allow-all --env-file=.env.production --output=docs-mirror src/cli.ts",
-    "compile:all": "deno task compile:linux && deno task compile:darwin-x64 && deno task compile:darwin-arm64 && deno task compile:windows",
-    "compile:linux": "deno compile --allow-all --env-file=.env.production --target=x86_64-unknown-linux-gnu --output=dist/docs-mirror-linux-x64 src/cli.ts",
+    "compile:all": "deno task compile:linux-x64 && deno task compile:linux-arm64 && deno task compile:darwin-x64 && deno task compile:darwin-arm64 && deno task compile:windows",
+    "compile:linux-x64": "deno compile --allow-all --env-file=.env.production --target=x86_64-unknown-linux-gnu --output=dist/docs-mirror-linux-x64 src/cli.ts",
+    "compile:linux-arm64": "deno compile --allow-all --env-file=.env.production --target=aarch64-unknown-linux-gnu --output=dist/docs-mirror-linux-arm64 src/cli.ts",
     "compile:darwin-x64": "deno compile --allow-all --env-file=.env.production --target=x86_64-apple-darwin --output=dist/docs-mirror-darwin-x64 src/cli.ts",
     "compile:darwin-arm64": "deno compile --allow-all --env-file=.env.production --target=aarch64-apple-darwin --output=dist/docs-mirror-darwin-arm64 src/cli.ts",
     "compile:windows": "deno compile --allow-all --env-file=.env.production --target=x86_64-pc-windows-msvc --output=dist/docs-mirror-windows-x64.exe src/cli.ts"

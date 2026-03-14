@@ -12,6 +12,7 @@ const arch = process.arch;
 
 const binaryMap = {
   "linux-x64": "docs-mirror-linux-x64",
+  "linux-arm64": "docs-mirror-linux-arm64",
   "darwin-x64": "docs-mirror-darwin-x64",
   "darwin-arm64": "docs-mirror-darwin-arm64",
   "win32-x64": "docs-mirror-windows-x64.exe",

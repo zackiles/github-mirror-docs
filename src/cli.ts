@@ -106,7 +106,7 @@ async function main() {
     return
   }
 
-  if (flags.help && !command) {
+  if (flags.help) {
     printHelp()
     return
   }
@@ -123,10 +123,6 @@ async function main() {
       break
     case "uninstall-binary":
       await uninstallBinary()
-      break
-    case "--help":
-    case "-h":
-      printHelp()
       break
     case "--version":
     case "-v":
