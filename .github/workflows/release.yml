@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  check-release:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.version.outputs.should_release }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version from commit message
+        id: version
+        run: |
+          MSG=$(git log -1 --pretty=%B)
+
+          if echo "$MSG" | grep -qP '^release:\s*v?\d+\.\d+\.\d+'; then
+            VERSION=$(echo "$MSG" | grep -oP '\d+\.\d+\.\d+' | head -1)
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "Releasing v$VERSION"
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "No release trigger in commit message"
+          fi
+
+  build:
+    needs: check-release
+    if: needs.check-release.outputs.should_release == 'true'
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            artifact: docs-mirror-linux-x64
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            artifact: docs-mirror-darwin-x64
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            artifact: docs-mirror-darwin-arm64
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            artifact: docs-mirror-windows-x64.exe
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.x"
+
+      - name: Compile binary
+        run: deno compile --allow-all --env-file=.env.production --target=${{ matrix.target }} --output=dist/${{ matrix.artifact }} src/cli.ts
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+
+  publish-github:
+    needs: [check-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ needs.check-release.outputs.version }}"
+          TAG="v$VERSION"
+
+          mv dist/docs-mirror-linux-x64/docs-mirror-linux-x64 dist/docs-mirror-linux-x64.bin
+          mv dist/docs-mirror-darwin-x64/docs-mirror-darwin-x64 dist/docs-mirror-darwin-x64.bin
+          mv dist/docs-mirror-darwin-arm64/docs-mirror-darwin-arm64 dist/docs-mirror-darwin-arm64.bin
+          mv dist/docs-mirror-windows-x64.exe/docs-mirror-windows-x64.exe dist/docs-mirror-windows-x64.exe.bin
+
+          chmod +x dist/docs-mirror-linux-x64.bin dist/docs-mirror-darwin-x64.bin dist/docs-mirror-darwin-arm64.bin
+
+          gh release create "$TAG" \
+            --title "docs-mirror $TAG" \
+            --generate-notes \
+            dist/docs-mirror-linux-x64.bin \
+            dist/docs-mirror-darwin-x64.bin \
+            dist/docs-mirror-darwin-arm64.bin \
+            dist/docs-mirror-windows-x64.exe.bin \
+            install.sh
+
+  publish-npm:
+    needs: [check-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+
+      - name: Prepare npm package
+        run: |
+          VERSION="${{ needs.check-release.outputs.version }}"
+
+          mkdir -p npm-pkg/bin
+          cp dist/docs-mirror-linux-x64/docs-mirror-linux-x64 npm-pkg/bin/docs-mirror-linux-x64
+          cp dist/docs-mirror-darwin-x64/docs-mirror-darwin-x64 npm-pkg/bin/docs-mirror-darwin-x64
+          cp dist/docs-mirror-darwin-arm64/docs-mirror-darwin-arm64 npm-pkg/bin/docs-mirror-darwin-arm64
+          cp dist/docs-mirror-windows-x64.exe/docs-mirror-windows-x64.exe npm-pkg/bin/docs-mirror-windows-x64.exe
+          chmod +x npm-pkg/bin/docs-mirror-*
+
+          cp npm/package.json npm-pkg/package.json
+          cp npm/cli.mjs npm-pkg/cli.mjs
+          sed -i "s/\"0.0.0-placeholder\"/\"$VERSION\"/" npm-pkg/package.json
+
+      - name: Publish to npm
+        working-directory: npm-pkg
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
