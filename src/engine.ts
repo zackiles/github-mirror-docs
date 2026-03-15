@@ -5,6 +5,7 @@ import { encodeHex } from "@std/encoding/hex"
 import { load as loadConfig, type MirrorConfig } from "./config.ts"
 import { parse as parseFrontmatter, slugify, type ParsedFile } from "./frontmatter.ts"
 import type { Adapter, AdapterConfig, Page, SyncResult } from "./adapters/types.ts"
+import { SyncConflictError } from "./adapters/types.ts"
 import { createConfluenceAdapter } from "./adapters/confluence.ts"
 import { createLinearAdapter } from "./adapters/linear.ts"
 import { createWebhookAdapter } from "./adapters/webhook.ts"
@@ -128,6 +129,8 @@ export async function sync(options: SyncOptions): Promise<EngineResult[]> {
 
     const fileMap = new Map(contentFiles.map((f) => [f.relativePath, f]))
     const pages = buildPages(contentFiles, config, mirror, repoUrl, adapterInstance, tracking, rootInfo.slug, fileMap)
+
+    detectSlugCollisions(pages)
 
     const syncResults = await adapterInstance.sync(collection, pages)
 
@@ -350,6 +353,21 @@ function buildPages(
         sourcePath: file.relativePath,
       }
     })
+}
+
+function detectSlugCollisions(pages: Page[]): void {
+  const seen = new Map<string, string>()
+  for (const page of pages) {
+    const existing = seen.get(page.slug)
+    if (existing) {
+      throw new SyncConflictError(
+        page.slug,
+        `Duplicate slug '${page.slug}' produced by '${existing}' and '${page.sourcePath}'.`,
+        `Add an explicit 'slug' in frontmatter to one of the conflicting files to make them unique.`,
+      )
+    }
+    seen.set(page.slug, page.sourcePath ?? page.title)
+  }
 }
 
 function findStaleEntries(

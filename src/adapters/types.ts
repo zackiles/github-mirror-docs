@@ -1,3 +1,14 @@
+export class SyncConflictError extends Error {
+  constructor(
+    public readonly resource: string,
+    public readonly reason: string,
+    public readonly resolution: string,
+  ) {
+    super(`Conflict on '${resource}': ${reason}\n  → ${resolution}`)
+    this.name = "SyncConflictError"
+  }
+}
+
 export interface Page {
   slug: string
   title: string

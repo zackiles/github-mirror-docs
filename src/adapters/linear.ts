@@ -1,4 +1,5 @@
 import type { Adapter, AdapterConfig, Page, SyncResult } from "./types.ts"
+import { SyncConflictError } from "./types.ts"
 import { toLinearMarkdown } from "../markdown.ts"
 import { contentHash } from "../engine.ts"
 
@@ -205,6 +206,7 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
             })
           }
         } catch (err) {
+          if (err instanceof SyncConflictError) throw err
           results.push({
             slug: page.slug,
             action: "failed",

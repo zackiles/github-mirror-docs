@@ -1,5 +1,6 @@
 import { parse as parseYaml } from "@std/yaml"
 import type { Adapter, AdapterConfig, Page, SyncResult } from "./types.ts"
+import { SyncConflictError } from "./types.ts"
 import { toHtml, rewriteLinks } from "../markdown.ts"
 import { contentHash } from "../engine.ts"
 
@@ -137,7 +138,7 @@ export function createWebhookAdapter(_config: AdapterConfig): Adapter {
         const data = await getRes.json()
         const existingId = extractJsonPath(data, template.response.id_path) ?? slug
         if (pageContent) {
-          await callEndpoint(template.endpoints.update_page, {
+          const updateRes = await callEndpoint(template.endpoints.update_page, {
             ...vars,
             content: pageContent,
             parent: "",
@@ -145,6 +146,18 @@ export function createWebhookAdapter(_config: AdapterConfig): Adapter {
             page_id: existingId,
             remote_id: existingId,
           })
+          if (updateRes && !updateRes.ok) {
+            const body = await updateRes.text()
+            throw new Error(
+              `Failed to update root page '${title}' (id: ${existingId}): ${updateRes.status} ${body}`,
+            )
+          }
+          if (!updateRes) {
+            throw new Error(
+              `Webhook template has no 'update_page' endpoint configured, but the root page (id: ${existingId}) already exists and needs updating. ` +
+              `Add an 'update_page' endpoint to your webhook template.`,
+            )
+          }
         }
         return { id: existingId, slug }
       }
@@ -255,6 +268,7 @@ export function createWebhookAdapter(_config: AdapterConfig): Adapter {
             })
           }
         } catch (err) {
+          if (err instanceof SyncConflictError) throw err
           results.push({
             slug: page.slug,
             action: "failed",
