@@ -57,9 +57,10 @@ docs-mirror uninstall-binary
 |---|---|---|
 | **Confluence Cloud** | Built-in adapter | Confluence storage format (auto-converted from markdown) |
 | **Linear Docs** | Built-in adapter | Markdown (native, no conversion loss) |
+| **GitHub Wiki** | Built-in adapter | Markdown (native, pushed via git) |
 | **Any HTTP API** | Webhook adapter template | Markdown or HTML (configurable) |
 
-The webhook adapter template lets you mirror to WordPress, Ghost, Strapi, Notion, or any CMS with an HTTP API — no code required, just fill out a YAML template.
+The GitHub Wiki adapter publishes docs directly to your repository's wiki — or another repo's wiki — via git push. The webhook adapter template lets you mirror to WordPress, Ghost, Strapi, Notion, or any CMS with an HTTP API — no code required, just fill out a YAML template.
 
 > [!NOTE]
 > **Resource tracking** — All adapters track remote resource IDs in `.docs-mirror-state.json` so that renamed files, changed titles, and updated frontmatter slugs still update the correct remote page instead of creating duplicates. This file is auto-generated on first sync and should be committed to your repository. For the webhook adapter, `delete_page` and `move_page` endpoints are available but disabled by default. Without them, orphaned pages from deleted or renamed source files must be cleaned up manually. See the [webhook template](templates/webhook.yml) for a ready-to-use implementation example.
@@ -76,6 +77,8 @@ mirrors:
     url: https://acme.atlassian.net
 
   - adapter: linear
+
+  - adapter: github-wiki
 ```
 
 See [Configuration Reference](docs/configuration.md) for all options.
@@ -125,6 +128,7 @@ Run `docs-mirror --help` for the full reference.
     CONFLUENCE_EMAIL: ${{ secrets.CONFLUENCE_EMAIL }}
     CONFLUENCE_TOKEN: ${{ secrets.CONFLUENCE_TOKEN }}
     LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 ## Infrastructure-as-Code
@@ -141,6 +145,7 @@ For organizations managing repos at scale, Pulumi and Terraform modules provisio
 - [Frontmatter Reference](docs/frontmatter.md)
 - [Confluence Setup](docs/adapters/confluence.md)
 - [Linear Setup](docs/adapters/linear.md)
+- [GitHub Wiki Setup](docs/adapters/github-wiki.md)
 - [Webhook / Custom CMS](docs/adapters/webhook.md)
 - [Pulumi Guide](docs/advanced/pulumi.md)
 - [Terraform Guide](docs/advanced/terraform.md)

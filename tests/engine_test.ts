@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertThrows } from "@std/assert"
 import { load, validate } from "../src/config.ts"
-import { contentHash, inferParentSlug, detectSlugCollisions } from "../src/engine.ts"
+import { contentHash, detectSlugCollisions, inferParentSlug } from "../src/engine.ts"
 import { parse } from "../src/frontmatter.ts"
 import { SyncConflictError } from "../src/adapters/types.ts"
 
@@ -162,10 +162,25 @@ Deno.test("detectSlugCollisions - allows unique slugs", () => {
 
 Deno.test("detectSlugCollisions - throws on duplicate slugs", () => {
   assertThrows(
-    () => detectSlugCollisions([
-      { slug: "guide", title: "Guide", content: "", tags: [], order: 1, sourcePath: "docs/guide.md" },
-      { slug: "guide", title: "Guide 2", content: "", tags: [], order: 2, sourcePath: "docs/Guide.md" },
-    ]),
+    () =>
+      detectSlugCollisions([
+        {
+          slug: "guide",
+          title: "Guide",
+          content: "",
+          tags: [],
+          order: 1,
+          sourcePath: "docs/guide.md",
+        },
+        {
+          slug: "guide",
+          title: "Guide 2",
+          content: "",
+          tags: [],
+          order: 2,
+          sourcePath: "docs/Guide.md",
+        },
+      ]),
     SyncConflictError,
     "Duplicate slug",
   )

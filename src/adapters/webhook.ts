@@ -1,7 +1,7 @@
 import { parse as parseYaml } from "@std/yaml"
 import type { Adapter, AdapterConfig, Page, SyncResult } from "./types.ts"
 import { SyncConflictError } from "./types.ts"
-import { toHtml, rewriteLinks } from "../markdown.ts"
+import { rewriteLinks, toHtml } from "../markdown.ts"
 import { contentHash } from "../engine.ts"
 
 interface WebhookTemplate {
@@ -58,7 +58,10 @@ export function createWebhookAdapter(_config: AdapterConfig): Adapter {
       const val = vars[key]
       if (val === undefined) return match
       if (jsonEscape && key !== "tags") {
-        return val.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t")
+        return val.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(
+          /\r/g,
+          "\\r",
+        ).replace(/\t/g, "\\t")
       }
       return val
     })
@@ -129,7 +132,11 @@ export function createWebhookAdapter(_config: AdapterConfig): Adapter {
       }
     },
 
-    async ensureRootPage(collection: string, title: string, pageContent?: string): Promise<{ id: string; slug: string }> {
+    async ensureRootPage(
+      collection: string,
+      title: string,
+      pageContent?: string,
+    ): Promise<{ id: string; slug: string }> {
       const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
       const vars = { collection, slug, title }
       const getRes = await callEndpoint(template.endpoints.get_page, vars)
@@ -155,7 +162,7 @@ export function createWebhookAdapter(_config: AdapterConfig): Adapter {
           if (!updateRes) {
             throw new Error(
               `Webhook template has no 'update_page' endpoint configured, but the root page (id: ${existingId}) already exists and needs updating. ` +
-              `Add an 'update_page' endpoint to your webhook template.`,
+                `Add an 'update_page' endpoint to your webhook template.`,
             )
           }
         }

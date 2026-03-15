@@ -1,14 +1,15 @@
 import { expandGlob } from "@std/fs"
-import { relative, resolve, dirname, basename } from "@std/path"
+import { basename, dirname, relative, resolve } from "@std/path"
 import { crypto } from "@std/crypto"
 import { encodeHex } from "@std/encoding/hex"
 import { load as loadConfig, type MirrorConfig } from "./config.ts"
-import { parse as parseFrontmatter, slugify, type ParsedFile } from "./frontmatter.ts"
+import { parse as parseFrontmatter, type ParsedFile, slugify } from "./frontmatter.ts"
 import type { Adapter, AdapterConfig, Page, SyncResult } from "./adapters/types.ts"
 import { SyncConflictError } from "./adapters/types.ts"
 import { createConfluenceAdapter } from "./adapters/confluence.ts"
 import { createLinearAdapter } from "./adapters/linear.ts"
 import { createWebhookAdapter } from "./adapters/webhook.ts"
+import { createGitHubWikiAdapter } from "./adapters/github-wiki.ts"
 import * as state from "./state.ts"
 
 type DiscoveredFile = ParsedFile & { path: string; relativePath: string }
@@ -62,10 +63,10 @@ export async function sync(options: SyncOptions): Promise<EngineResult[]> {
     const collection = mirror.collection ?? config.collection
 
     const readme = findRootReadme(publishable)
-    const rootTitle = mirror.root_page
-      ?? readme?.frontmatter.title
-      ?? inferRepoName(repoUrl)
-      ?? "Documentation"
+    const rootTitle = mirror.root_page ??
+      readme?.frontmatter.title ??
+      inferRepoName(repoUrl) ??
+      "Documentation"
 
     log(`\nSyncing to ${adapterName} (${collection})...`)
 
@@ -107,12 +108,14 @@ export async function sync(options: SyncOptions): Promise<EngineResult[]> {
       state.remove(tracking, adapterName, stalePath)
     }
 
-    const contentFiles = readme
-      ? publishable.filter((f) => f !== readme)
-      : publishable
+    const contentFiles = readme ? publishable.filter((f) => f !== readme) : publishable
 
     const readmeContent = readme
-      ? adapterInstance.convertMarkdown(readme.content, `${repoUrl}/blob/main/${readme.relativePath}`, mirror.banner !== false)
+      ? adapterInstance.convertMarkdown(
+        readme.content,
+        `${repoUrl}/blob/main/${readme.relativePath}`,
+        mirror.banner !== false,
+      )
       : undefined
 
     await adapterInstance.ensureCollection(collection)
@@ -128,7 +131,16 @@ export async function sync(options: SyncOptions): Promise<EngineResult[]> {
     }
 
     const fileMap = new Map(contentFiles.map((f) => [f.relativePath, f]))
-    const pages = buildPages(contentFiles, config, mirror, repoUrl, adapterInstance, tracking, rootInfo.slug, fileMap)
+    const pages = buildPages(
+      contentFiles,
+      config,
+      mirror,
+      repoUrl,
+      adapterInstance,
+      tracking,
+      rootInfo.slug,
+      fileMap,
+    )
 
     detectSlugCollisions(pages)
 
@@ -162,11 +174,15 @@ export async function sync(options: SyncOptions): Promise<EngineResult[]> {
       const icon = r.action === "created"
         ? "+"
         : r.action === "updated"
-          ? "~"
-          : r.action === "skipped"
-            ? "-"
-            : "!"
-      log(`  [${icon}] ${r.slug}: ${r.action}${r.url ? ` (${r.url})` : ""}${r.error ? ` ERROR: ${r.error}` : ""}`)
+        ? "~"
+        : r.action === "skipped"
+        ? "-"
+        : "!"
+      log(
+        `  [${icon}] ${r.slug}: ${r.action}${r.url ? ` (${r.url})` : ""}${
+          r.error ? ` ERROR: ${r.error}` : ""
+        }`,
+      )
     }
 
     results.push({ adapter: adapterName, results: syncResults })
@@ -252,6 +268,8 @@ function createAdapter(config: AdapterConfig): Adapter {
       return createLinearAdapter(config)
     case "webhook":
       return createWebhookAdapter(config)
+    case "github-wiki":
+      return createGitHubWikiAdapter(config)
     default:
       throw new Error(`Unknown adapter: ${config.adapter}`)
   }

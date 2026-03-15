@@ -6,8 +6,8 @@ import {
   lookup,
   remove,
   save,
-  update,
   type StateData,
+  update,
 } from "../src/state.ts"
 
 Deno.test("state - empty returns version 1 with no resources", () => {

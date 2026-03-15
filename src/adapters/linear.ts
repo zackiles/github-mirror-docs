@@ -21,7 +21,9 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
     })
     const data = await res.json()
     if (data.errors?.length) {
-      throw new Error(`Linear API error: ${data.errors.map((e: { message: string }) => e.message).join(", ")}`)
+      throw new Error(
+        `Linear API error: ${data.errors.map((e: { message: string }) => e.message).join(", ")}`,
+      )
     }
     return data.data as T
   }
@@ -81,7 +83,11 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
       }
     },
 
-    async ensureRootPage(collection: string, title: string, pageContent?: string): Promise<{ id: string; slug: string }> {
+    async ensureRootPage(
+      collection: string,
+      title: string,
+      pageContent?: string,
+    ): Promise<{ id: string; slug: string }> {
       const project = await adapter.ensureCollection(collection)
       const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
 
@@ -100,10 +106,13 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
       const existing = data.documents.nodes.find((d) => d.content?.includes(marker))
       if (existing) {
         if (pageContent) {
-          const existingHashMatch = existing.content?.match(/docs-mirror:slug=[^&]+&hash=([a-f0-9]+)/)
+          const existingHashMatch = existing.content?.match(
+            /docs-mirror:slug=[^&]+&hash=([a-f0-9]+)/,
+          )
           const newHash = await contentHash(pageContent)
           if (existingHashMatch?.[1] !== newHash) {
-            const contentWithMarker = `${pageContent}\n\n<!-- docs-mirror:slug=${slug}&hash=${newHash} -->`
+            const contentWithMarker =
+              `${pageContent}\n\n<!-- docs-mirror:slug=${slug}&hash=${newHash} -->`
             await gql(
               `mutation($id: String!, $title: String!, $content: String!) {
                 documentUpdate(id: $id, input: { title: $title, content: $content }) {
@@ -165,7 +174,9 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
             : allDocs.documents.nodes.find((d) => d.content?.includes(marker))
 
           if (existing) {
-            const existingHashMatch = existing.content?.match(/docs-mirror:slug=[^&]+&hash=([a-f0-9]+)/)
+            const existingHashMatch = existing.content?.match(
+              /docs-mirror:slug=[^&]+&hash=([a-f0-9]+)/,
+            )
             if (existingHashMatch?.[1] === hash) {
               results.push({ slug: page.slug, action: "skipped", id: existing.id })
               continue

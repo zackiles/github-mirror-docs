@@ -43,14 +43,16 @@ export function resolve(
     parentRaw === false || parentRaw === "false" || parentRaw === ""
       ? false
       : typeof parentRaw === "string"
-        ? parentRaw
-        : undefined
+      ? parentRaw
+      : undefined
   return {
     title,
     publish: attrs.publish !== false,
     collection: attrs.collection as string | undefined,
     parent,
-    tags: Array.isArray(attrs.tags) ? attrs.tags.filter((t): t is string => typeof t === "string") : [],
+    tags: Array.isArray(attrs.tags)
+      ? attrs.tags.filter((t): t is string => typeof t === "string")
+      : [],
     order: typeof attrs.order === "number" ? attrs.order : undefined,
     slug: (attrs.slug as string) || slugify(title),
   }
