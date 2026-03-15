@@ -20,6 +20,8 @@ interface WebhookTemplate {
     create_page?: EndpointDef
     update_page?: EndpointDef
     lock_page?: EndpointDef
+    delete_page?: EndpointDef
+    move_page?: EndpointDef
   }
   response: {
     id_path: string
@@ -178,15 +180,41 @@ export function createWebhookAdapter(_config: AdapterConfig): Adapter {
             content: page.content,
             parent: page.parentSlug ?? "",
             tags: JSON.stringify(page.tags),
-            page_id: "",
+            page_id: page.remoteId ?? "",
+            remote_id: page.remoteId ?? "",
           }
 
-          const getRes = await callEndpoint(template.endpoints.get_page, vars)
+          let existing: { id: string; url?: string } | null = null
 
-          if (getRes?.ok) {
-            const data = await getRes.json()
-            const pageId = extractJsonPath(data, template.response.id_path) ?? ""
-            vars.page_id = pageId
+          if (page.remoteId) {
+            vars.page_id = page.remoteId
+            const getRes = await callEndpoint(template.endpoints.get_page, vars)
+            if (getRes?.ok) {
+              const data = await getRes.json()
+              existing = {
+                id: page.remoteId,
+                url: extractJsonPath(data, template.response.url_path),
+              }
+            }
+          }
+
+          if (!existing) {
+            const getRes = await callEndpoint(template.endpoints.get_page, vars)
+            if (getRes?.ok) {
+              const data = await getRes.json()
+              const pageId = extractJsonPath(data, template.response.id_path) ?? ""
+              vars.page_id = pageId
+              vars.remote_id = pageId
+              existing = {
+                id: pageId,
+                url: extractJsonPath(data, template.response.url_path),
+              }
+            }
+          }
+
+          if (existing) {
+            vars.page_id = existing.id
+            vars.remote_id = existing.id
 
             const updateRes = await callEndpoint(template.endpoints.update_page, vars)
             if (!updateRes?.ok) {
@@ -198,6 +226,7 @@ export function createWebhookAdapter(_config: AdapterConfig): Adapter {
             results.push({
               slug: page.slug,
               action: "updated",
+              id: existing.id,
               url: extractJsonPath(updateData, template.response.url_path),
             })
           } else {
@@ -208,9 +237,11 @@ export function createWebhookAdapter(_config: AdapterConfig): Adapter {
               continue
             }
             const createData = await createRes.json()
+            const createdId = extractJsonPath(createData, template.response.id_path) ?? ""
             results.push({
               slug: page.slug,
               action: "created",
+              id: createdId,
               url: extractJsonPath(createData, template.response.url_path),
             })
           }
@@ -225,6 +256,50 @@ export function createWebhookAdapter(_config: AdapterConfig): Adapter {
 
       return results
     },
+
+    async delete(_collection: string, id: string): Promise<void> {
+      if (!template.endpoints.delete_page?.url) return
+      const res = await callEndpoint(template.endpoints.delete_page, { page_id: id, remote_id: id })
+      if (res && !res.ok && res.status !== 404) {
+        const body = await res.text()
+        throw new Error(`Failed to delete webhook page ${id}: ${body}`)
+      }
+    },
+
+    // TODO: Uncomment and customize this method to enable move/rename tracking
+    // for your webhook target. This example shows how to handle a page that has
+    // been moved or renamed in the source repository. If your CMS supports a
+    // move/rename API, implement it here. Otherwise, the engine will fall back to
+    // delete + re-create automatically.
+    //
+    // async move(collection: string, id: string, page: Page): Promise<SyncResult> {
+    //   if (!template.endpoints.move_page?.url) {
+    //     throw new Error("move not supported")
+    //   }
+    //   const vars: Record<string, string> = {
+    //     collection,
+    //     slug: page.slug,
+    //     title: page.title,
+    //     content: page.content,
+    //     parent: page.parentSlug ?? "",
+    //     tags: JSON.stringify(page.tags),
+    //     page_id: id,
+    //     remote_id: id,
+    //   }
+    //   const res = await callEndpoint(template.endpoints.move_page, vars)
+    //   if (!res?.ok) {
+    //     const body = await res?.text()
+    //     throw new Error(`Move failed for ${id}: ${body}`)
+    //   }
+    //   const data = await res.json()
+    //   const newId = extractJsonPath(data, template.response.id_path) ?? id
+    //   return {
+    //     slug: page.slug,
+    //     action: "updated",
+    //     id: newId,
+    //     url: extractJsonPath(data, template.response.url_path),
+    //   }
+    // },
 
     async lock(_collection: string, slugs: string[]): Promise<void> {
       if (!template.endpoints.lock_page?.url) return

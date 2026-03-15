@@ -5,6 +5,8 @@ export interface Page {
   parentSlug?: string
   tags: string[]
   order: number
+  remoteId?: string
+  sourcePath?: string
 }
 
 export interface SyncResult {
@@ -12,6 +14,7 @@ export interface SyncResult {
   action: "created" | "updated" | "skipped" | "failed"
   url?: string
   error?: string
+  id?: string
 }
 
 export interface AdapterConfig {
@@ -33,4 +36,5 @@ export interface Adapter {
   convertMarkdown(markdown: string, sourceUrl: string, banner: boolean): string
   sync(collection: string, pages: Page[]): Promise<SyncResult[]>
   lock(collection: string, slugs: string[]): Promise<void>
+  delete?(collection: string, id: string): Promise<void>
 }

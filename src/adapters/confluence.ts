@@ -130,13 +130,15 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
 
       for (const page of pages) {
         try {
-          const existing = await findPageBySlug(spaceResult.id, page.slug)
+          const existing = page.remoteId
+            ? await findPageById(page.remoteId)
+            : await findPageBySlug(spaceResult.id, page.slug)
           const hash = await contentHash(page.content)
 
           if (existing) {
             const existingHash = await getProperty(existing.id, "docs-mirror-hash")
             if (existingHash === hash) {
-              results.push({ slug: page.slug, action: "skipped" })
+              results.push({ slug: page.slug, action: "skipped", id: existing.id })
               continue
             }
 
@@ -164,6 +166,7 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
             results.push({
               slug: page.slug,
               action: "updated",
+              id: existing.id,
               url: `${state.baseUrl}/wiki${pageData._links?.webui ?? ""}`,
             })
           } else {
@@ -191,6 +194,7 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
             results.push({
               slug: page.slug,
               action: "created",
+              id: pageData.id,
               url: `${state.baseUrl}/wiki${pageData._links?.webui ?? ""}`,
             })
           }
@@ -204,6 +208,14 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
       }
 
       return results
+    },
+
+    async delete(_collection: string, id: string): Promise<void> {
+      const res = await api(`/wiki/api/v2/pages/${id}`, { method: "DELETE" })
+      if (!res.ok && res.status !== 404) {
+        const body = await res.text()
+        throw new Error(`Failed to delete Confluence page ${id}: ${body}`)
+      }
     },
 
     async lock(_collection: string, slugs: string[]): Promise<void> {
@@ -240,6 +252,15 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
         }
       }
     },
+  }
+
+  async function findPageById(
+    pageId: string,
+  ): Promise<{ id: string; version: number } | null> {
+    const res = await api(`/wiki/api/v2/pages/${pageId}`)
+    if (!res.ok) return null
+    const page = await res.json()
+    return { id: page.id, version: page.version?.number ?? 1 }
   }
 
   async function findPageBySlug(

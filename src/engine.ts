@@ -8,6 +8,7 @@ import type { Adapter, AdapterConfig, Page, SyncResult } from "./adapters/types.
 import { createConfluenceAdapter } from "./adapters/confluence.ts"
 import { createLinearAdapter } from "./adapters/linear.ts"
 import { createWebhookAdapter } from "./adapters/webhook.ts"
+import * as state from "./state.ts"
 
 export interface SyncOptions {
   configPath: string
@@ -48,14 +49,17 @@ export async function sync(options: SyncOptions): Promise<EngineResult[]> {
     ? config.mirrors.filter((m) => m.adapter === options.adapter)
     : config.mirrors
 
+  const tracking = await state.load(cwd)
+  const currentPaths = publishable.map((f) => f.relativePath)
   const results: EngineResult[] = []
 
   for (const mirror of mirrors) {
     const adapterInstance = createAdapter(mirror)
+    const adapterName = adapterInstance.name
     const collection = mirror.collection ?? config.collection
     const rootPage = mirror.root_page ?? repoUrl?.match(/([^/]+\/[^/]+)$/)?.[1] ?? "docs-mirror"
 
-    log(`\nSyncing to ${adapterInstance.name} (${collection})...`)
+    log(`\nSyncing to ${adapterName} (${collection})...`)
 
     if (options.dryRun) {
       const dryResults = publishable.map((f) => ({
@@ -66,17 +70,53 @@ export async function sync(options: SyncOptions): Promise<EngineResult[]> {
       for (const r of dryResults) {
         log(`  [dry-run] ${r.slug}: ${r.url}`)
       }
-      results.push({ adapter: adapterInstance.name, results: dryResults })
+      results.push({ adapter: adapterName, results: dryResults })
       continue
     }
 
     await adapterInstance.validate(mirror)
-    const pages = buildPages(publishable, config, mirror, repoUrl, adapterInstance)
+
+    const renames = state.detectRenames(tracking, adapterName, currentPaths)
+    for (const rename of renames) {
+      log(`  [→] detected rename: ${rename.from} → ${rename.to} (id: ${rename.entry.id})`)
+      state.remove(tracking, adapterName, rename.from)
+      state.update(tracking, adapterName, rename.to, rename.entry)
+    }
+
+    const staleEntries = findStaleEntries(tracking, adapterName, currentPaths, renames)
+    for (const [stalePath, entry] of staleEntries) {
+      if (adapterInstance.delete) {
+        try {
+          log(`  [✕] removing stale resource: ${stalePath} (id: ${entry.id})`)
+          await adapterInstance.delete(collection, entry.id)
+        } catch (err) {
+          log(`  [!] failed to delete ${stalePath}: ${err instanceof Error ? err.message : err}`)
+        }
+      }
+      state.remove(tracking, adapterName, stalePath)
+    }
+
+    const pages = buildPages(publishable, config, mirror, repoUrl, adapterInstance, tracking)
 
     await adapterInstance.ensureCollection(collection)
     await adapterInstance.ensureRootPage(collection, rootPage)
 
     const syncResults = await adapterInstance.sync(collection, pages)
+
+    for (const r of syncResults) {
+      if (r.id) {
+        const file = publishable.find((f) => f.frontmatter.slug === r.slug)
+        if (file) {
+          state.update(tracking, adapterName, file.relativePath, {
+            id: r.id,
+            slug: r.slug,
+            hash: await contentHash(
+              pages.find((p) => p.slug === r.slug)?.content ?? "",
+            ),
+          })
+        }
+      }
+    }
 
     if (mirror.lock) {
       const created = syncResults
@@ -98,8 +138,10 @@ export async function sync(options: SyncOptions): Promise<EngineResult[]> {
       log(`  [${icon}] ${r.slug}: ${r.action}${r.url ? ` (${r.url})` : ""}${r.error ? ` ERROR: ${r.error}` : ""}`)
     }
 
-    results.push({ adapter: adapterInstance.name, results: syncResults })
+    results.push({ adapter: adapterName, results: syncResults })
   }
+
+  await state.save(cwd, tracking)
 
   return results
 }
@@ -182,12 +224,14 @@ function buildPages(
   mirror: AdapterConfig,
   repoUrl: string,
   adapter: Adapter,
+  tracking?: state.StateData,
 ): Page[] {
   return files
     .sort((a, b) => (a.frontmatter.order ?? 999) - (b.frontmatter.order ?? 999))
     .map((file) => {
       const sourceUrl = `${repoUrl}/blob/main/${file.relativePath}`
       const content = adapter.convertMarkdown(file.content, sourceUrl, mirror.banner !== false)
+      const tracked = tracking ? state.lookup(tracking, adapter.name, file.relativePath) : undefined
       return {
         slug: file.frontmatter.slug,
         title: file.frontmatter.title,
@@ -197,8 +241,27 @@ function buildPages(
           : undefined,
         tags: [...(config.defaults.tags ?? []), ...file.frontmatter.tags],
         order: file.frontmatter.order ?? 999,
+        remoteId: tracked?.id,
+        sourcePath: file.relativePath,
       }
     })
+}
+
+function findStaleEntries(
+  tracking: state.StateData,
+  adapter: string,
+  currentPaths: string[],
+  renames: state.Rename[],
+): [string, state.ResourceEntry][] {
+  const tracked = tracking.resources[adapter]
+  if (!tracked) return []
+
+  const currentSet = new Set(currentPaths)
+  const renamedFrom = new Set(renames.map((r) => r.from))
+
+  return Object.entries(tracked).filter(
+    ([path]) => !currentSet.has(path) && !renamedFrom.has(path),
+  )
 }
 
 export async function contentHash(content: string): Promise<string> {
