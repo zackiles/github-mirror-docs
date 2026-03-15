@@ -355,7 +355,7 @@ function buildPages(
     })
 }
 
-function detectSlugCollisions(pages: Page[]): void {
+export function detectSlugCollisions(pages: Page[]): void {
   const seen = new Map<string, string>()
   for (const page of pages) {
     const existing = seen.get(page.slug)
