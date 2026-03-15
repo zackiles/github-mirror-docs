@@ -616,6 +616,12 @@ async function uninstall(global: GlobalFlags, args: string[]) {
     } catch {
       console.log("⚠ .docs-mirror.yml not found")
     }
+    try {
+      await Deno.remove(".docs-mirror-state.json")
+      console.log("✔ Removed .docs-mirror-state.json")
+    } catch {
+      // state file may not exist yet
+    }
   }
 
   if (stripFm) {

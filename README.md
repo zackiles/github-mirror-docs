@@ -61,6 +61,9 @@ docs-mirror uninstall-binary
 
 The webhook adapter template lets you mirror to WordPress, Ghost, Strapi, Notion, or any CMS with an HTTP API — no code required, just fill out a YAML template.
 
+> [!NOTE]
+> **Resource tracking** — All adapters track remote resource IDs in `.docs-mirror-state.json` so that renamed files, changed titles, and updated frontmatter slugs still update the correct remote page instead of creating duplicates. This file is auto-generated on first sync and should be committed to your repository. For the webhook adapter, `delete_page` and `move_page` endpoints are available but disabled by default. Without them, orphaned pages from deleted or renamed source files must be cleaned up manually. See the [webhook template](templates/webhook.yml) for a ready-to-use implementation example.
+
 ## Configuration
 
 A single `.docs-mirror.yml` file in your repo root:

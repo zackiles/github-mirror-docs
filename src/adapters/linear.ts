@@ -140,12 +140,14 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
           const fullMarker = `<!-- docs-mirror:slug=${page.slug}&hash=${hash} -->`
           const contentWithMarker = `${page.content}\n\n${fullMarker}`
 
-          const existing = allDocs.documents.nodes.find((d) => d.content?.includes(marker))
+          const existing = page.remoteId
+            ? allDocs.documents.nodes.find((d) => d.id === page.remoteId)
+            : allDocs.documents.nodes.find((d) => d.content?.includes(marker))
 
           if (existing) {
             const existingHashMatch = existing.content?.match(/docs-mirror:slug=[^&]+&hash=([a-f0-9]+)/)
             if (existingHashMatch?.[1] === hash) {
-              results.push({ slug: page.slug, action: "skipped" })
+              results.push({ slug: page.slug, action: "skipped", id: existing.id })
               continue
             }
 
@@ -161,6 +163,7 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
             results.push({
               slug: page.slug,
               action: "updated",
+              id: existing.id,
               url: existing.url,
             })
           } else {
@@ -178,6 +181,7 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
             results.push({
               slug: page.slug,
               action: "created",
+              id: created.documentCreate.document.id,
               url: created.documentCreate.document.url,
             })
           }
@@ -191,6 +195,15 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
       }
 
       return results
+    },
+
+    async delete(_collection: string, id: string): Promise<void> {
+      await gql(
+        `mutation($id: String!) {
+          documentDelete(id: $id) { success }
+        }`,
+        { id },
+      )
     },
 
     async lock(_collection: string, _slugs: string[]): Promise<void> {
