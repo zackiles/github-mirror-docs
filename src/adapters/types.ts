@@ -32,7 +32,7 @@ export interface Adapter {
   name: string
   validate(config: AdapterConfig): Promise<void>
   ensureCollection(name: string): Promise<{ id: string; url: string }>
-  ensureRootPage(collection: string, title: string): Promise<{ id: string; slug: string }>
+  ensureRootPage(collection: string, title: string, content?: string): Promise<{ id: string; slug: string }>
   convertMarkdown(markdown: string, sourceUrl: string, banner: boolean): string
   sync(collection: string, pages: Page[]): Promise<SyncResult[]>
   lock(collection: string, slugs: string[]): Promise<void>

@@ -89,15 +89,30 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
       }
     },
 
-    async ensureRootPage(collection: string, title: string): Promise<{ id: string; slug: string }> {
+    async ensureRootPage(collection: string, title: string, content?: string): Promise<{ id: string; slug: string }> {
       const spaceResult = await adapter.ensureCollection(collection)
+      const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+      const bodyValue = content ?? `<p>Root page for mirrored documentation.</p>`
       const searchRes = await api(
         `/wiki/api/v2/pages?space-id=${spaceResult.id}&title=${encodeURIComponent(title)}&limit=1`,
       )
       const searchData = await searchRes.json()
       if (searchData.results?.length > 0) {
         const page = searchData.results[0]
-        return { id: page.id, slug: title.toLowerCase().replace(/[^a-z0-9]+/g, "-") }
+        if (content) {
+          await api(`/wiki/api/v2/pages/${page.id}`, {
+            method: "PUT",
+            body: JSON.stringify({
+              id: page.id,
+              status: "current",
+              title,
+              version: { number: (page.version?.number ?? 1) + 1 },
+              body: { representation: "storage", value: bodyValue },
+            }),
+          })
+        }
+        await setProperty(page.id, "docs-mirror-slug", slug)
+        return { id: page.id, slug }
       }
 
       const createRes = await api("/wiki/api/v2/pages", {
@@ -106,10 +121,7 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
           spaceId: spaceResult.id,
           title,
           status: "current",
-          body: {
-            representation: "storage",
-            value: `<p>Root page for mirrored documentation.</p>`,
-          },
+          body: { representation: "storage", value: bodyValue },
         }),
       })
       if (!createRes.ok) {
@@ -117,7 +129,8 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
         throw new Error(`Failed to create root page '${title}': ${body}`)
       }
       const page = await createRes.json()
-      return { id: page.id, slug: title.toLowerCase().replace(/[^a-z0-9]+/g, "-") }
+      await setProperty(page.id, "docs-mirror-slug", slug)
+      return { id: page.id, slug }
     },
 
     convertMarkdown(markdown: string, sourceUrl: string, banner: boolean): string {

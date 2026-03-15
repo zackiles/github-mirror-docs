@@ -62,11 +62,14 @@ export async function sync(options: SyncOptions): Promise<EngineResult[]> {
     log(`\nSyncing to ${adapterName} (${collection})...`)
 
     if (options.dryRun) {
-      const dryResults = publishable.map((f) => ({
-        slug: f.frontmatter.slug,
-        action: "skipped" as const,
-        url: `(dry-run) ${f.frontmatter.title}`,
-      }))
+      const dryResults = publishable.map((f) => {
+        const isReadme = f.relativePath.toLowerCase() === "readme.md"
+        return {
+          slug: f.frontmatter.slug,
+          action: "skipped" as const,
+          url: `(dry-run) ${f.frontmatter.title}${isReadme ? " [root page]" : ""}`,
+        }
+      })
       for (const r of dryResults) {
         log(`  [dry-run] ${r.slug}: ${r.url}`)
       }
@@ -96,10 +99,30 @@ export async function sync(options: SyncOptions): Promise<EngineResult[]> {
       state.remove(tracking, adapterName, stalePath)
     }
 
-    const pages = buildPages(publishable, config, mirror, repoUrl, adapterInstance, tracking)
+    const readmeIndex = publishable.findIndex((f) =>
+      f.relativePath.toLowerCase() === "readme.md"
+    )
+    const readme = readmeIndex !== -1 ? publishable[readmeIndex] : undefined
+    const nonReadmeFiles = readme
+      ? publishable.filter((_, i) => i !== readmeIndex)
+      : publishable
+
+    const readmeContent = readme
+      ? adapterInstance.convertMarkdown(readme.content, `${repoUrl}/blob/main/${readme.relativePath}`, mirror.banner !== false)
+      : undefined
 
     await adapterInstance.ensureCollection(collection)
-    await adapterInstance.ensureRootPage(collection, rootPage)
+    const rootInfo = await adapterInstance.ensureRootPage(collection, rootPage, readmeContent)
+
+    if (readme) {
+      state.update(tracking, adapterName, readme.relativePath, {
+        id: rootInfo.id,
+        slug: rootInfo.slug,
+        hash: await contentHash(readmeContent ?? ""),
+      })
+    }
+
+    const pages = buildPages(nonReadmeFiles, config, mirror, repoUrl, adapterInstance, tracking, rootInfo.slug)
 
     const syncResults = await adapterInstance.sync(collection, pages)
 
@@ -225,6 +248,7 @@ function buildPages(
   repoUrl: string,
   adapter: Adapter,
   tracking?: state.StateData,
+  rootSlug?: string,
 ): Page[] {
   return files
     .sort((a, b) => (a.frontmatter.order ?? 999) - (b.frontmatter.order ?? 999))
@@ -232,13 +256,14 @@ function buildPages(
       const sourceUrl = `${repoUrl}/blob/main/${file.relativePath}`
       const content = adapter.convertMarkdown(file.content, sourceUrl, mirror.banner !== false)
       const tracked = tracking ? state.lookup(tracking, adapter.name, file.relativePath) : undefined
+      const explicitParent = file.frontmatter.parent
+        ? file.frontmatter.parent.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+        : undefined
       return {
         slug: file.frontmatter.slug,
         title: file.frontmatter.title,
         content,
-        parentSlug: file.frontmatter.parent
-          ? file.frontmatter.parent.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-          : undefined,
+        parentSlug: explicitParent ?? rootSlug,
         tags: [...(config.defaults.tags ?? []), ...file.frontmatter.tags],
         order: file.frontmatter.order ?? 999,
         remoteId: tracked?.id,
