@@ -10,6 +10,12 @@ export function toLinearMarkdown(markdown: string, sourceUrl: string, banner: bo
   return result
 }
 
+export function toNotionMarkdown(markdown: string, sourceUrl: string, banner: boolean): string {
+  let result = banner ? notionBanner(sourceUrl) + "\n\n" : ""
+  result += rewriteLinks(markdown, sourceUrl)
+  return result
+}
+
 export function toWikiMarkdown(markdown: string, sourceUrl: string, banner: boolean): string {
   let result = banner ? wikiBanner(sourceUrl) + "\n\n" : ""
   result += rewriteLinks(markdown, sourceUrl)
@@ -43,6 +49,19 @@ function linearBanner(sourceUrl: string): string {
   const path = pathFromUrl(sourceUrl)
   return [
     `> **Mirrored from GitHub** \u2014 This document is published from`,
+    `> [${path}](${sourceUrl}).`,
+    `> Edits here will be overwritten on next sync.`,
+    `> [Edit on GitHub \u2192](${editUrl})`,
+    "",
+    "---",
+  ].join("\n")
+}
+
+function notionBanner(sourceUrl: string): string {
+  const editUrl = sourceUrl.replace("/blob/", "/edit/")
+  const path = pathFromUrl(sourceUrl)
+  return [
+    `> **Mirrored from GitHub** \u2014 This page is published from`,
     `> [${path}](${sourceUrl}).`,
     `> Edits here will be overwritten on next sync.`,
     `> [Edit on GitHub \u2192](${editUrl})`,

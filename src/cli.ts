@@ -15,6 +15,7 @@ import {
   validateConfluenceCredentials,
   validateGitHubToken,
   validateLinearCredentials,
+  validateNotionCredentials,
   validateUrl,
 } from "./discover.ts"
 
@@ -146,6 +147,8 @@ interface ParsedFlags {
   githubWiki?: boolean
   githubWikiRepo?: string
   githubToken?: string
+  notionToken?: string
+  notionPageId?: string
   collection?: string
   exclude?: string
   configPath: string
@@ -185,6 +188,12 @@ function parseFlags(args: string[]): ParsedFlags {
         break
       case "--github-token":
         result.githubToken = args[++i]
+        break
+      case "--notion-token":
+        result.notionToken = args[++i]
+        break
+      case "--notion-page-id":
+        result.notionPageId = args[++i]
         break
       case "--collection":
         result.collection = args[++i]
@@ -245,6 +254,7 @@ async function init(global: GlobalFlags, args: string[]) {
   const confluenceToken = resolveEnv(flags.confluenceToken, "CONFLUENCE_TOKEN")
   const linearApiKey = resolveEnv(flags.linearApiKey, "LINEAR_API_KEY")
   const githubToken = resolveEnv(flags.githubToken, "GITHUB_TOKEN")
+  const notionToken = resolveEnv(flags.notionToken, "NOTION_TOKEN")
 
   let adapters = inferAdapters(creds, flags)
 
@@ -333,6 +343,26 @@ async function init(global: GlobalFlags, args: string[]) {
       wikiConfig.repo = flags.githubWikiRepo
     }
     adapterConfigs.push(wikiConfig)
+  }
+
+  if (adapters.includes("notion")) {
+    if (notionToken) {
+      console.log("Validating Notion integration token...")
+      const valid = await validateNotionCredentials(notionToken)
+      if (valid) {
+        console.log("✔ Notion integration token valid")
+      } else {
+        console.log("⚠ Could not validate Notion token (may work in CI)")
+      }
+    } else if (global.interactive) {
+      await promptForCredentials("notion", gh)
+    }
+
+    const notionConfig: Record<string, unknown> = { adapter: "notion" }
+    if (flags.notionPageId) {
+      notionConfig.page_id = flags.notionPageId
+    }
+    adapterConfigs.push(notionConfig)
   }
 
   let collection: string
@@ -428,6 +458,7 @@ async function init(global: GlobalFlags, args: string[]) {
       confluenceToken: confluenceToken,
       linearApiKey: linearApiKey,
       githubToken: githubToken,
+      notionToken: notionToken,
     })
   } else {
     printSecretInstructions(adapters)
@@ -528,6 +559,30 @@ async function promptForCredentials(
     }
   }
 
+  if (adapter === "notion") {
+    console.log("\n  NOTION_TOKEN not found in environment.")
+    console.log("  Create an internal integration at https://www.notion.so/my-integrations")
+    console.log("  Then share your target page with the integration.")
+
+    if (confirm("  Open browser to create a Notion integration?", false)) {
+      openBrowser("https://www.notion.so/my-integrations")
+    }
+
+    const token = readLine("  NOTION_TOKEN (or blank to skip)")
+    if (token) {
+      Deno.env.set("NOTION_TOKEN", token)
+      await appendToEnvFile("NOTION_TOKEN", token)
+      console.log("  ✔ Saved to .env for local development")
+
+      if (gh.available && gh.authenticated) {
+        if (confirm("  Set this as a GitHub Actions secret via gh CLI?")) {
+          setGhSecret("NOTION_TOKEN", token)
+          console.log("  ✔ GitHub secret set")
+        }
+      }
+    }
+  }
+
   if (adapter === "github-wiki") {
     console.log("\n  GITHUB_TOKEN not found in environment.")
     console.log("  In GitHub Actions, ${{ github.token }} is available automatically.")
@@ -560,6 +615,7 @@ function offerGhSecrets(
     confluenceToken?: string
     linearApiKey?: string
     githubToken?: string
+    notionToken?: string
   },
 ) {
   const secrets: [string, string][] = []
@@ -573,6 +629,9 @@ function offerGhSecrets(
   }
   if (adapters.includes("github-wiki") && creds.githubToken) {
     secrets.push(["GITHUB_TOKEN", creds.githubToken])
+  }
+  if (adapters.includes("notion") && creds.notionToken) {
+    secrets.push(["NOTION_TOKEN", creds.notionToken])
   }
 
   if (secrets.length === 0) {
@@ -621,6 +680,11 @@ function printSecretInstructions(adapters: string[]) {
       "     GITHUB_TOKEN        in Actions, use ${{ github.token }} (automatic) or a PAT with repo scope",
     )
   }
+  if (adapters.includes("notion")) {
+    console.log(
+      "     NOTION_TOKEN        create at https://www.notion.so/my-integrations",
+    )
+  }
 }
 
 async function runSync(global: GlobalFlags, args: string[]) {
@@ -630,11 +694,13 @@ async function runSync(global: GlobalFlags, args: string[]) {
   const confluenceToken = resolveEnv(flags.confluenceToken, "CONFLUENCE_TOKEN")
   const linearApiKey = resolveEnv(flags.linearApiKey, "LINEAR_API_KEY")
   const githubToken = resolveEnv(flags.githubToken, "GITHUB_TOKEN")
+  const notionToken = resolveEnv(flags.notionToken, "NOTION_TOKEN")
 
   if (confluenceEmail) Deno.env.set("CONFLUENCE_EMAIL", confluenceEmail)
   if (confluenceToken) Deno.env.set("CONFLUENCE_TOKEN", confluenceToken)
   if (linearApiKey) Deno.env.set("LINEAR_API_KEY", linearApiKey)
   if (githubToken) Deno.env.set("GITHUB_TOKEN", githubToken)
+  if (notionToken) Deno.env.set("NOTION_TOKEN", notionToken)
 
   const inferredAdapter = inferAdapterFilter(flags)
 
@@ -668,6 +734,7 @@ function inferAdapterFilter(flags: ParsedFlags): string | undefined {
   if (flags.linearApiKey) return "linear"
   if (flags.webhookTemplate) return "webhook"
   if (flags.githubWiki || flags.githubWikiRepo) return "github-wiki"
+  if (flags.notionToken || flags.notionPageId) return "notion"
   return undefined
 }
 
@@ -737,7 +804,13 @@ async function uninstall(global: GlobalFlags, args: string[]) {
   if (gh.available && gh.authenticated && global.interactive) {
     if (confirm("Remove GitHub Actions secrets via gh CLI?", false)) {
       for (
-        const name of ["CONFLUENCE_EMAIL", "CONFLUENCE_TOKEN", "LINEAR_API_KEY", "GITHUB_TOKEN"]
+        const name of [
+          "CONFLUENCE_EMAIL",
+          "CONFLUENCE_TOKEN",
+          "LINEAR_API_KEY",
+          "GITHUB_TOKEN",
+          "NOTION_TOKEN",
+        ]
       ) {
         try {
           const cmd = new Deno.Command("gh", {
@@ -827,6 +900,8 @@ Adapter flags (used by init and sync — adapters are inferred automatically):
   --github-wiki              Enable GitHub Wiki adapter (implies github-wiki adapter)
   --github-wiki-repo <owner/repo>  Target a different repo's wiki (implies github-wiki adapter)
   --github-token <token>     GitHub token (overrides GITHUB_TOKEN env)
+  --notion-token <token>     Notion integration token (overrides NOTION_TOKEN env, implies Notion adapter)
+  --notion-page-id <id>      Notion parent page ID (implies Notion adapter)
 
 Init options:
   --collection <name>        Collection name (default: derived from repo name)
@@ -857,6 +932,7 @@ function promptAdapters(): string[] {
   const adapters: string[] = []
   if (confirm("Configure Confluence mirror?")) adapters.push("confluence")
   if (confirm("Configure Linear mirror?")) adapters.push("linear")
+  if (confirm("Configure Notion mirror?")) adapters.push("notion")
   if (confirm("Configure GitHub Wiki mirror?")) adapters.push("github-wiki")
   if (adapters.length === 0) {
     console.log("No adapters selected. At least one is required.")
@@ -894,6 +970,9 @@ function buildWorkflow(adapters: string[]): string {
   }
   if (adapters.includes("github-wiki")) {
     secrets.push("          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}")
+  }
+  if (adapters.includes("notion")) {
+    secrets.push("          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}")
   }
 
   return `name: Mirror Docs

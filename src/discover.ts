@@ -98,6 +98,7 @@ export interface CredentialScan {
   linearApiKey?: string
   webhookToken?: string
   githubToken?: string
+  notionToken?: string
 }
 
 export function scanCredentials(): CredentialScan {
@@ -107,6 +108,7 @@ export function scanCredentials(): CredentialScan {
     linearApiKey: Deno.env.get("LINEAR_API_KEY"),
     webhookToken: Deno.env.get("WEBHOOK_TOKEN"),
     githubToken: Deno.env.get("GITHUB_TOKEN"),
+    notionToken: Deno.env.get("NOTION_TOKEN"),
   }
 }
 
@@ -118,6 +120,8 @@ export function inferAdapters(creds: CredentialScan, flags: {
   webhookTemplate?: string
   githubWiki?: boolean
   githubWikiRepo?: string
+  notionToken?: string
+  notionPageId?: string
 }): string[] {
   const adapters: string[] = []
 
@@ -136,8 +140,26 @@ export function inferAdapters(creds: CredentialScan, flags: {
   if (flags.githubWiki || flags.githubWikiRepo) {
     adapters.push("github-wiki")
   }
+  if (flags.notionToken || flags.notionPageId || creds.notionToken) {
+    adapters.push("notion")
+  }
 
   return adapters
+}
+
+export async function validateNotionCredentials(token: string): Promise<boolean> {
+  try {
+    const resp = await fetch("https://api.notion.com/v1/users/me", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Notion-Version": "2022-06-28",
+      },
+      signal: AbortSignal.timeout(5000),
+    })
+    return resp.status === 200
+  } catch {
+    return false
+  }
 }
 
 export async function validateGitHubToken(token: string): Promise<boolean> {
