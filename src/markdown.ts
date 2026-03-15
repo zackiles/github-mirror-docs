@@ -10,6 +10,12 @@ export function toLinearMarkdown(markdown: string, sourceUrl: string, banner: bo
   return result
 }
 
+export function toWikiMarkdown(markdown: string, sourceUrl: string, banner: boolean): string {
+  let result = banner ? wikiBanner(sourceUrl) + "\n\n" : ""
+  result += rewriteLinks(markdown, sourceUrl)
+  return result
+}
+
 export function toHtml(markdown: string, sourceUrl: string, banner: boolean): string {
   let result = banner ? htmlBanner(sourceUrl) + "\n" : ""
   result += convertToHtml(markdown, sourceUrl)
@@ -22,7 +28,9 @@ function confluenceBanner(sourceUrl: string): string {
     '<ac:structured-macro ac:name="info">',
     '  <ac:parameter ac:name="title">Mirrored from GitHub</ac:parameter>',
     "  <ac:rich-text-body>",
-    `    <p>This page is automatically published from <a href="${sourceUrl}">${pathFromUrl(sourceUrl)}</a>. `,
+    `    <p>This page is automatically published from <a href="${sourceUrl}">${
+      pathFromUrl(sourceUrl)
+    }</a>. `,
     `Edits made here will be overwritten on next sync. `,
     `<a href="${editUrl}">Edit on GitHub \u2192</a></p>`,
     "  </ac:rich-text-body>",
@@ -35,6 +43,19 @@ function linearBanner(sourceUrl: string): string {
   const path = pathFromUrl(sourceUrl)
   return [
     `> **Mirrored from GitHub** \u2014 This document is published from`,
+    `> [${path}](${sourceUrl}).`,
+    `> Edits here will be overwritten on next sync.`,
+    `> [Edit on GitHub \u2192](${editUrl})`,
+    "",
+    "---",
+  ].join("\n")
+}
+
+function wikiBanner(sourceUrl: string): string {
+  const editUrl = sourceUrl.replace("/blob/", "/edit/")
+  const path = pathFromUrl(sourceUrl)
+  return [
+    `> **Mirrored from GitHub** \u2014 This wiki page is published from`,
     `> [${path}](${sourceUrl}).`,
     `> Edits here will be overwritten on next sync.`,
     `> [Edit on GitHub \u2192](${editUrl})`,
@@ -153,7 +174,9 @@ function convertToStorage(markdown: string, baseUrl: string): string {
 
     if (line.startsWith("> ")) {
       output.push(
-        `<ac:structured-macro ac:name="quote"><ac:rich-text-body><p>${inlineFormat(line.slice(2))}</p></ac:rich-text-body></ac:structured-macro>`,
+        `<ac:structured-macro ac:name="quote"><ac:rich-text-body><p>${
+          inlineFormat(line.slice(2))
+        }</p></ac:rich-text-body></ac:structured-macro>`,
       )
       continue
     }

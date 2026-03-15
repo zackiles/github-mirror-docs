@@ -2,19 +2,20 @@ import { load as loadEnv } from "@std/dotenv"
 import { expandGlob } from "@std/fs"
 import { relative } from "@std/path"
 import { stringify as stringifyYaml } from "@std/yaml"
-import { parse as parseFrontmatter, inject, extractTitle, slugify } from "./frontmatter.ts"
+import { extractTitle, inject, parse as parseFrontmatter, slugify } from "./frontmatter.ts"
 import { sync } from "./engine.ts"
 import {
-  detectRepo,
-  detectGh,
-  setGhSecret,
-  scanCredentials,
-  inferAdapters,
-  validateUrl,
-  validateConfluenceCredentials,
-  validateLinearCredentials,
   detectAtlassianCli,
+  detectGh,
+  detectRepo,
+  inferAdapters,
   openBrowser,
+  scanCredentials,
+  setGhSecret,
+  validateConfluenceCredentials,
+  validateGitHubToken,
+  validateLinearCredentials,
+  validateUrl,
 } from "./discover.ts"
 
 const VERSION = "1.0.0"
@@ -86,9 +87,7 @@ function confirm(message: string, defaultYes = true): boolean {
   const hint = defaultYes ? "Y/n" : "y/N"
   const answer = readLine(`${message} (${hint})`)
   if (!answer) return defaultYes
-  return defaultYes
-    ? answer.toLowerCase() !== "n"
-    : answer.toLowerCase() === "y"
+  return defaultYes ? answer.toLowerCase() !== "n" : answer.toLowerCase() === "y"
 }
 
 async function main() {
@@ -144,6 +143,9 @@ interface ParsedFlags {
   confluenceToken?: string
   linearApiKey?: string
   webhookTemplate?: string
+  githubWiki?: boolean
+  githubWikiRepo?: string
+  githubToken?: string
   collection?: string
   exclude?: string
   configPath: string
@@ -173,6 +175,16 @@ function parseFlags(args: string[]): ParsedFlags {
         break
       case "--webhook-template":
         result.webhookTemplate = args[++i]
+        break
+      case "--github-wiki":
+        result.githubWiki = true
+        break
+      case "--github-wiki-repo":
+        result.githubWikiRepo = args[++i]
+        result.githubWiki = true
+        break
+      case "--github-token":
+        result.githubToken = args[++i]
         break
       case "--collection":
         result.collection = args[++i]
@@ -232,13 +244,16 @@ async function init(global: GlobalFlags, args: string[]) {
   const confluenceEmail = resolveEnv(flags.confluenceEmail, "CONFLUENCE_EMAIL")
   const confluenceToken = resolveEnv(flags.confluenceToken, "CONFLUENCE_TOKEN")
   const linearApiKey = resolveEnv(flags.linearApiKey, "LINEAR_API_KEY")
+  const githubToken = resolveEnv(flags.githubToken, "GITHUB_TOKEN")
 
   let adapters = inferAdapters(creds, flags)
 
   if (adapters.length === 0 && global.interactive) {
     adapters = promptAdapters()
   } else if (adapters.length === 0) {
-    console.error("No adapters detected. Provide adapter-specific flags (e.g. --confluence-url) or set credential env vars.")
+    console.error(
+      "No adapters detected. Provide adapter-specific flags (e.g. --confluence-url) or set credential env vars.",
+    )
     Deno.exit(1)
   }
 
@@ -268,7 +283,9 @@ async function init(global: GlobalFlags, args: string[]) {
       if (valid) {
         console.log("✔ Confluence credentials valid")
       } else {
-        console.log("⚠ Could not validate Confluence credentials (may work in CI with correct network access)")
+        console.log(
+          "⚠ Could not validate Confluence credentials (may work in CI with correct network access)",
+        )
       }
     } else if (global.interactive && !confluenceEmail) {
       await promptForCredentials("confluence", gh)
@@ -296,6 +313,26 @@ async function init(global: GlobalFlags, args: string[]) {
   if (adapters.includes("webhook")) {
     const template = flags.webhookTemplate ?? ".docs-mirror-webhook.yml"
     adapterConfigs.push({ adapter: "webhook", template })
+  }
+
+  if (adapters.includes("github-wiki")) {
+    if (githubToken) {
+      console.log("Validating GitHub token...")
+      const valid = await validateGitHubToken(githubToken)
+      if (valid) {
+        console.log("✔ GitHub token valid")
+      } else {
+        console.log("⚠ Could not validate GitHub token (may work in CI with correct permissions)")
+      }
+    } else if (global.interactive) {
+      await promptForCredentials("github-wiki", gh)
+    }
+
+    const wikiConfig: Record<string, unknown> = { adapter: "github-wiki" }
+    if (flags.githubWikiRepo) {
+      wikiConfig.repo = flags.githubWikiRepo
+    }
+    adapterConfigs.push(wikiConfig)
   }
 
   let collection: string
@@ -378,7 +415,9 @@ async function init(global: GlobalFlags, args: string[]) {
 
   await ensureGitignore()
 
-  console.log(`\n✔ Added frontmatter to ${injected} files (${merged} already had frontmatter, merged)`)
+  console.log(
+    `\n✔ Added frontmatter to ${injected} files (${merged} already had frontmatter, merged)`,
+  )
   console.log("✔ Created .docs-mirror.yml")
   console.log("✔ Created .github/workflows/docs-mirror.yml")
   console.log("✔ Verified .env is in .gitignore")
@@ -388,6 +427,7 @@ async function init(global: GlobalFlags, args: string[]) {
       confluenceEmail: confluenceEmail,
       confluenceToken: confluenceToken,
       linearApiKey: linearApiKey,
+      githubToken: githubToken,
     })
   } else {
     printSecretInstructions(adapters)
@@ -400,13 +440,19 @@ async function init(global: GlobalFlags, args: string[]) {
   )
 }
 
-async function promptForCredentials(adapter: string, gh: { available: boolean; authenticated: boolean }) {
+async function promptForCredentials(
+  adapter: string,
+  gh: { available: boolean; authenticated: boolean },
+) {
   if (adapter === "confluence") {
     console.log("\n  Confluence credentials not found in environment.")
 
     if (detectAtlassianCli()) {
       console.log("  Atlassian CLI (atlas) detected.")
-      const generate = confirm("  Generate an API token via atlas CLI for local development?", false)
+      const generate = confirm(
+        "  Generate an API token via atlas CLI for local development?",
+        false,
+      )
       if (generate) {
         try {
           const cmd = new Deno.Command("atlas", {
@@ -418,7 +464,9 @@ async function promptForCredentials(adapter: string, gh: { available: boolean; a
           const text = new TextDecoder().decode(out.stdout)
           if (out.success && text.includes("Logged in")) {
             console.log("  ✔ Atlassian CLI is authenticated")
-            console.log("  → You can create an API token at: https://id.atlassian.com/manage-profile/security/api-tokens")
+            console.log(
+              "  → You can create an API token at: https://id.atlassian.com/manage-profile/security/api-tokens",
+            )
             console.log("  → Then set CONFLUENCE_EMAIL and CONFLUENCE_TOKEN in .env")
           } else {
             console.log("  ⚠ Atlassian CLI is not authenticated. Run: atlas auth login")
@@ -432,7 +480,9 @@ async function promptForCredentials(adapter: string, gh: { available: boolean; a
     if (confirm("  Open browser to create an Atlassian API token?", false)) {
       const opened = openBrowser("https://id.atlassian.com/manage-profile/security/api-tokens")
       if (!opened) {
-        console.log("  → Open manually: https://id.atlassian.com/manage-profile/security/api-tokens")
+        console.log(
+          "  → Open manually: https://id.atlassian.com/manage-profile/security/api-tokens",
+        )
       }
     }
 
@@ -477,11 +527,40 @@ async function promptForCredentials(adapter: string, gh: { available: boolean; a
       }
     }
   }
+
+  if (adapter === "github-wiki") {
+    console.log("\n  GITHUB_TOKEN not found in environment.")
+    console.log("  In GitHub Actions, ${{ github.token }} is available automatically.")
+    console.log("  For local development, create a Personal Access Token with 'repo' scope.")
+
+    if (confirm("  Open browser to create a GitHub PAT?", false)) {
+      openBrowser("https://github.com/settings/tokens/new?scopes=repo&description=docs-mirror")
+    }
+
+    const token = readLine("  GITHUB_TOKEN (or blank to skip)")
+    if (token) {
+      Deno.env.set("GITHUB_TOKEN", token)
+      await appendToEnvFile("GITHUB_TOKEN", token)
+      console.log("  ✔ Saved to .env for local development")
+
+      if (gh.available && gh.authenticated) {
+        if (confirm("  Set this as a GitHub Actions secret via gh CLI?")) {
+          setGhSecret("GITHUB_TOKEN", token)
+          console.log("  ✔ GitHub secret set")
+        }
+      }
+    }
+  }
 }
 
 function offerGhSecrets(
   adapters: string[],
-  creds: { confluenceEmail?: string; confluenceToken?: string; linearApiKey?: string },
+  creds: {
+    confluenceEmail?: string
+    confluenceToken?: string
+    linearApiKey?: string
+    githubToken?: string
+  },
 ) {
   const secrets: [string, string][] = []
 
@@ -491,6 +570,9 @@ function offerGhSecrets(
   }
   if (adapters.includes("linear") && creds.linearApiKey) {
     secrets.push(["LINEAR_API_KEY", creds.linearApiKey])
+  }
+  if (adapters.includes("github-wiki") && creds.githubToken) {
+    secrets.push(["GITHUB_TOKEN", creds.githubToken])
   }
 
   if (secrets.length === 0) {
@@ -534,6 +616,11 @@ function printSecretInstructions(adapters: string[]) {
       "     LINEAR_API_KEY      create at Linear → Settings → API → Personal API keys",
     )
   }
+  if (adapters.includes("github-wiki")) {
+    console.log(
+      "     GITHUB_TOKEN        in Actions, use ${{ github.token }} (automatic) or a PAT with repo scope",
+    )
+  }
 }
 
 async function runSync(global: GlobalFlags, args: string[]) {
@@ -542,10 +629,12 @@ async function runSync(global: GlobalFlags, args: string[]) {
   const confluenceEmail = resolveEnv(flags.confluenceEmail, "CONFLUENCE_EMAIL")
   const confluenceToken = resolveEnv(flags.confluenceToken, "CONFLUENCE_TOKEN")
   const linearApiKey = resolveEnv(flags.linearApiKey, "LINEAR_API_KEY")
+  const githubToken = resolveEnv(flags.githubToken, "GITHUB_TOKEN")
 
   if (confluenceEmail) Deno.env.set("CONFLUENCE_EMAIL", confluenceEmail)
   if (confluenceToken) Deno.env.set("CONFLUENCE_TOKEN", confluenceToken)
   if (linearApiKey) Deno.env.set("LINEAR_API_KEY", linearApiKey)
+  if (githubToken) Deno.env.set("GITHUB_TOKEN", githubToken)
 
   const inferredAdapter = inferAdapterFilter(flags)
 
@@ -578,6 +667,7 @@ function inferAdapterFilter(flags: ParsedFlags): string | undefined {
   if (flags.confluenceEmail || flags.confluenceToken || flags.confluenceUrl) return "confluence"
   if (flags.linearApiKey) return "linear"
   if (flags.webhookTemplate) return "webhook"
+  if (flags.githubWiki || flags.githubWikiRepo) return "github-wiki"
   return undefined
 }
 
@@ -593,7 +683,8 @@ async function uninstall(global: GlobalFlags, args: string[]) {
   if (global.interactive) {
     removeWorkflow = flags.removeWorkflow ?? confirm("Remove .github/workflows/docs-mirror.yml?")
     removeConfig = flags.removeConfig ?? confirm("Remove .docs-mirror.yml?")
-    stripFm = flags.stripFrontmatter ?? confirm("Strip docs-mirror frontmatter from markdown files?", false)
+    stripFm = flags.stripFrontmatter ??
+      confirm("Strip docs-mirror frontmatter from markdown files?", false)
   } else {
     removeWorkflow = flags.removeWorkflow ?? true
     removeConfig = flags.removeConfig ?? true
@@ -645,7 +736,9 @@ async function uninstall(global: GlobalFlags, args: string[]) {
   const gh = detectGh()
   if (gh.available && gh.authenticated && global.interactive) {
     if (confirm("Remove GitHub Actions secrets via gh CLI?", false)) {
-      for (const name of ["CONFLUENCE_EMAIL", "CONFLUENCE_TOKEN", "LINEAR_API_KEY"]) {
+      for (
+        const name of ["CONFLUENCE_EMAIL", "CONFLUENCE_TOKEN", "LINEAR_API_KEY", "GITHUB_TOKEN"]
+      ) {
         try {
           const cmd = new Deno.Command("gh", {
             args: ["secret", "delete", name, "--yes"],
@@ -660,7 +753,7 @@ async function uninstall(global: GlobalFlags, args: string[]) {
   } else {
     console.log("\nRemaining manual steps:")
     console.log("  1. Remove GitHub Actions secrets if no longer needed:")
-    console.log("     → CONFLUENCE_EMAIL, CONFLUENCE_TOKEN, LINEAR_API_KEY")
+    console.log("     → CONFLUENCE_EMAIL, CONFLUENCE_TOKEN, LINEAR_API_KEY, GITHUB_TOKEN")
     console.log("     (Settings → Secrets → Actions)")
   }
 
@@ -731,6 +824,9 @@ Adapter flags (used by init and sync — adapters are inferred automatically):
   --confluence-token <token> Confluence API token (overrides CONFLUENCE_TOKEN env)
   --linear-api-key <key>     Linear API key (overrides LINEAR_API_KEY env, implies Linear adapter)
   --webhook-template <path>  Webhook template path (implies Webhook adapter)
+  --github-wiki              Enable GitHub Wiki adapter (implies github-wiki adapter)
+  --github-wiki-repo <owner/repo>  Target a different repo's wiki (implies github-wiki adapter)
+  --github-token <token>     GitHub token (overrides GITHUB_TOKEN env)
 
 Init options:
   --collection <name>        Collection name (default: derived from repo name)
@@ -761,6 +857,7 @@ function promptAdapters(): string[] {
   const adapters: string[] = []
   if (confirm("Configure Confluence mirror?")) adapters.push("confluence")
   if (confirm("Configure Linear mirror?")) adapters.push("linear")
+  if (confirm("Configure GitHub Wiki mirror?")) adapters.push("github-wiki")
   if (adapters.length === 0) {
     console.log("No adapters selected. At least one is required.")
     Deno.exit(1)
@@ -795,6 +892,9 @@ function buildWorkflow(adapters: string[]): string {
   if (adapters.includes("linear")) {
     secrets.push("          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}")
   }
+  if (adapters.includes("github-wiki")) {
+    secrets.push("          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}")
+  }
 
   return `name: Mirror Docs
 on:
@@ -806,7 +906,7 @@ on:
       - '.docs-mirror.yml'
 
 permissions:
-  contents: read
+  contents: ${adapters.includes("github-wiki") ? "write" : "read"}
 
 concurrency:
   group: docs-mirror

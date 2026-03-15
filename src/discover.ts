@@ -97,6 +97,7 @@ export interface CredentialScan {
   confluenceToken?: string
   linearApiKey?: string
   webhookToken?: string
+  githubToken?: string
 }
 
 export function scanCredentials(): CredentialScan {
@@ -105,6 +106,7 @@ export function scanCredentials(): CredentialScan {
     confluenceToken: Deno.env.get("CONFLUENCE_TOKEN"),
     linearApiKey: Deno.env.get("LINEAR_API_KEY"),
     webhookToken: Deno.env.get("WEBHOOK_TOKEN"),
+    githubToken: Deno.env.get("GITHUB_TOKEN"),
   }
 }
 
@@ -114,10 +116,15 @@ export function inferAdapters(creds: CredentialScan, flags: {
   confluenceToken?: string
   linearApiKey?: string
   webhookTemplate?: string
+  githubWiki?: boolean
+  githubWikiRepo?: string
 }): string[] {
   const adapters: string[] = []
 
-  if (flags.confluenceUrl || flags.confluenceEmail || flags.confluenceToken || creds.confluenceEmail || creds.confluenceToken) {
+  if (
+    flags.confluenceUrl || flags.confluenceEmail || flags.confluenceToken ||
+    creds.confluenceEmail || creds.confluenceToken
+  ) {
     adapters.push("confluence")
   }
   if (flags.linearApiKey || creds.linearApiKey) {
@@ -126,8 +133,26 @@ export function inferAdapters(creds: CredentialScan, flags: {
   if (flags.webhookTemplate || creds.webhookToken) {
     adapters.push("webhook")
   }
+  if (flags.githubWiki || flags.githubWikiRepo) {
+    adapters.push("github-wiki")
+  }
 
   return adapters
+}
+
+export async function validateGitHubToken(token: string): Promise<boolean> {
+  try {
+    const resp = await fetch("https://api.github.com/user", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+      },
+      signal: AbortSignal.timeout(5000),
+    })
+    return resp.status === 200
+  } catch {
+    return false
+  }
 }
 
 export function validateUrl(url: string): boolean {
@@ -152,7 +177,11 @@ export async function checkConfluenceReachable(url: string): Promise<boolean> {
   }
 }
 
-export async function validateConfluenceCredentials(url: string, email: string, token: string): Promise<boolean> {
+export async function validateConfluenceCredentials(
+  url: string,
+  email: string,
+  token: string,
+): Promise<boolean> {
   try {
     const clean = url.replace(/\/$/, "")
     const auth = btoa(`${email}:${token}`)
@@ -196,8 +225,8 @@ export function openBrowser(url: string): boolean {
   const commands: [string, string[]][] = Deno.build.os === "darwin"
     ? [["open", [url]]]
     : Deno.build.os === "windows"
-      ? [["cmd", ["/c", "start", url]]]
-      : [["xdg-open", [url]], ["sensible-browser", [url]]]
+    ? [["cmd", ["/c", "start", url]]]
+    : [["xdg-open", [url]], ["sensible-browser", [url]]]
 
   for (const [cmd, args] of commands) {
     try {

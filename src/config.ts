@@ -18,7 +18,7 @@ export interface MirrorConfig {
   mirrors: AdapterConfig[]
 }
 
-const VALID_ADAPTERS = new Set(["confluence", "linear", "webhook"])
+const VALID_ADAPTERS = new Set(["confluence", "linear", "webhook", "github-wiki"])
 
 export async function load(path: string): Promise<MirrorConfig> {
   const text = await Deno.readTextFile(path)
@@ -64,7 +64,9 @@ function resolveMirrors(raw?: unknown[]): AdapterConfig[] {
     }
     if (!VALID_ADAPTERS.has(m.adapter)) {
       throw new Error(
-        `Config: mirrors[${i}].adapter '${m.adapter}' is not valid. Use: ${[...VALID_ADAPTERS].join(", ")}`,
+        `Config: mirrors[${i}].adapter '${m.adapter}' is not valid. Use: ${
+          [...VALID_ADAPTERS].join(", ")
+        }`,
       )
     }
     if (m.adapter === "confluence" && !m.url) {
@@ -81,6 +83,7 @@ function resolveMirrors(raw?: unknown[]): AdapterConfig[] {
       lock: m.lock !== false,
       banner: m.banner !== false,
       template: m.template as string | undefined,
+      repo: m.repo as string | undefined,
     }
   })
 }
