@@ -51,11 +51,16 @@ export function createGitHubWikiAdapter(_config: AdapterConfig): Adapter {
   function parseRepo(config: AdapterConfig): { owner: string; repo: string } {
     if (config.repo && typeof config.repo === "string") {
       const parts = (config.repo as string).split("/")
-      if (parts.length === 2) return { owner: parts[0], repo: parts[1] }
+      if (parts.length !== 2 || !parts[0] || !parts[1]) {
+        throw new Error(
+          `Invalid 'repo' value '${config.repo}'. Expected 'owner/name' format (e.g. 'myorg/my-repo').`,
+        )
+      }
+      return { owner: parts[0], repo: parts[1] }
     }
     if (config.url) {
-      const match = config.url.match(/github\.com[/:]([^/]+)\/([^/.]+)/)
-      if (match) return { owner: match[1], repo: match[2].replace(/\.wiki\.git$/, "") }
+      const match = config.url.match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.wiki)?(?:\.git)?$/)
+      if (match) return { owner: match[1], repo: match[2] }
     }
     try {
       const cmd = new Deno.Command("git", {
@@ -65,8 +70,8 @@ export function createGitHubWikiAdapter(_config: AdapterConfig): Adapter {
       })
       const output = cmd.outputSync()
       const url = new TextDecoder().decode(output.stdout).trim()
-      const match = url.match(/github\.com[/:]([^/]+)\/([^/.]+)/)
-      if (match) return { owner: match[1], repo: match[2].replace(/\.git$/, "") }
+      const match = url.match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/)
+      if (match) return { owner: match[1], repo: match[2] }
     } catch {
       // not in a git repo
     }
@@ -259,10 +264,19 @@ export function createGitHubWikiAdapter(_config: AdapterConfig): Adapter {
         }
       }
 
-      await Deno.writeTextFile(
-        `${state.wikiDir}/_Sidebar.md`,
-        generateSidebar(rootTitle, pages),
-      )
+      const sidebarPath = `${state.wikiDir}/_Sidebar.md`
+      const sidebarContent = generateSidebar(rootTitle, pages)
+      let sidebarChanged = true
+      try {
+        const existing = await Deno.readTextFile(sidebarPath)
+        sidebarChanged = existing !== sidebarContent
+      } catch {
+        // file doesn't exist yet
+      }
+      if (sidebarChanged) {
+        await Deno.writeTextFile(sidebarPath, sidebarContent)
+        state.hasChanges = true
+      }
 
       if (state.hasChanges) {
         commitAndPush()
