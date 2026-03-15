@@ -18,7 +18,7 @@ export interface MirrorConfig {
   mirrors: AdapterConfig[]
 }
 
-const VALID_ADAPTERS = new Set(["confluence", "linear", "webhook", "github-wiki"])
+const VALID_ADAPTERS = new Set(["confluence", "linear", "webhook", "github-wiki", "notion"])
 
 export async function load(path: string): Promise<MirrorConfig> {
   const text = await Deno.readTextFile(path)
@@ -84,6 +84,7 @@ function resolveMirrors(raw?: unknown[]): AdapterConfig[] {
       banner: m.banner !== false,
       template: m.template as string | undefined,
       repo: m.repo as string | undefined,
+      page_id: m.page_id as string | undefined,
     }
   })
 }

@@ -53,7 +53,7 @@ Deno.test("config - validates empty mirrors", () => {
 
 Deno.test("config - validates unknown adapter", () => {
   assertThrows(
-    () => validate({ collection: "Test", mirrors: [{ adapter: "notion" }] }),
+    () => validate({ collection: "Test", mirrors: [{ adapter: "foobar" }] }),
     Error,
     "not valid",
   )

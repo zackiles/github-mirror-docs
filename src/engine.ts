@@ -10,6 +10,7 @@ import { createConfluenceAdapter } from "./adapters/confluence.ts"
 import { createLinearAdapter } from "./adapters/linear.ts"
 import { createWebhookAdapter } from "./adapters/webhook.ts"
 import { createGitHubWikiAdapter } from "./adapters/github-wiki.ts"
+import { createNotionAdapter } from "./adapters/notion.ts"
 import * as state from "./state.ts"
 
 type DiscoveredFile = ParsedFile & { path: string; relativePath: string }
@@ -270,6 +271,8 @@ function createAdapter(config: AdapterConfig): Adapter {
       return createWebhookAdapter(config)
     case "github-wiki":
       return createGitHubWikiAdapter(config)
+    case "notion":
+      return createNotionAdapter(config)
     default:
       throw new Error(`Unknown adapter: ${config.adapter}`)
   }
