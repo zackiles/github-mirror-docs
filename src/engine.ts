@@ -1,14 +1,17 @@
 import { expandGlob } from "@std/fs"
-import { relative, resolve } from "@std/path"
+import { relative, resolve, dirname, basename } from "@std/path"
 import { crypto } from "@std/crypto"
 import { encodeHex } from "@std/encoding/hex"
 import { load as loadConfig, type MirrorConfig } from "./config.ts"
-import { parse as parseFrontmatter, type ParsedFile } from "./frontmatter.ts"
+import { parse as parseFrontmatter, slugify, type ParsedFile } from "./frontmatter.ts"
 import type { Adapter, AdapterConfig, Page, SyncResult } from "./adapters/types.ts"
+import { SyncConflictError } from "./adapters/types.ts"
 import { createConfluenceAdapter } from "./adapters/confluence.ts"
 import { createLinearAdapter } from "./adapters/linear.ts"
 import { createWebhookAdapter } from "./adapters/webhook.ts"
 import * as state from "./state.ts"
+
+type DiscoveredFile = ParsedFile & { path: string; relativePath: string }
 
 export interface SyncOptions {
   configPath: string
@@ -57,16 +60,24 @@ export async function sync(options: SyncOptions): Promise<EngineResult[]> {
     const adapterInstance = createAdapter(mirror)
     const adapterName = adapterInstance.name
     const collection = mirror.collection ?? config.collection
-    const rootPage = mirror.root_page ?? repoUrl?.match(/([^/]+\/[^/]+)$/)?.[1] ?? "docs-mirror"
+
+    const readme = findRootReadme(publishable)
+    const rootTitle = mirror.root_page
+      ?? readme?.frontmatter.title
+      ?? inferRepoName(repoUrl)
+      ?? "Documentation"
 
     log(`\nSyncing to ${adapterName} (${collection})...`)
 
     if (options.dryRun) {
-      const dryResults = publishable.map((f) => ({
-        slug: f.frontmatter.slug,
-        action: "skipped" as const,
-        url: `(dry-run) ${f.frontmatter.title}`,
-      }))
+      const dryResults = publishable.map((f) => {
+        const isRoot = f === readme
+        return {
+          slug: f.frontmatter.slug,
+          action: "skipped" as const,
+          url: `(dry-run) ${f.frontmatter.title}${isRoot ? " [root page]" : ""}`,
+        }
+      })
       for (const r of dryResults) {
         log(`  [dry-run] ${r.slug}: ${r.url}`)
       }
@@ -96,16 +107,36 @@ export async function sync(options: SyncOptions): Promise<EngineResult[]> {
       state.remove(tracking, adapterName, stalePath)
     }
 
-    const pages = buildPages(publishable, config, mirror, repoUrl, adapterInstance, tracking)
+    const contentFiles = readme
+      ? publishable.filter((f) => f !== readme)
+      : publishable
+
+    const readmeContent = readme
+      ? adapterInstance.convertMarkdown(readme.content, `${repoUrl}/blob/main/${readme.relativePath}`, mirror.banner !== false)
+      : undefined
 
     await adapterInstance.ensureCollection(collection)
-    await adapterInstance.ensureRootPage(collection, rootPage)
+    const rootInfo = await adapterInstance.ensureRootPage(collection, rootTitle, readmeContent)
+
+    if (readme) {
+      log(`  [*] ${readme.relativePath}: root page`)
+      state.update(tracking, adapterName, readme.relativePath, {
+        id: rootInfo.id,
+        slug: rootInfo.slug,
+        hash: await contentHash(readmeContent ?? ""),
+      })
+    }
+
+    const fileMap = new Map(contentFiles.map((f) => [f.relativePath, f]))
+    const pages = buildPages(contentFiles, config, mirror, repoUrl, adapterInstance, tracking, rootInfo.slug, fileMap)
+
+    detectSlugCollisions(pages)
 
     const syncResults = await adapterInstance.sync(collection, pages)
 
     for (const r of syncResults) {
       if (r.id) {
-        const file = publishable.find((f) => f.frontmatter.slug === r.slug)
+        const file = contentFiles.find((f) => f.frontmatter.slug === r.slug)
         if (file) {
           state.update(tracking, adapterName, file.relativePath, {
             id: r.id,
@@ -144,6 +175,73 @@ export async function sync(options: SyncOptions): Promise<EngineResult[]> {
   await state.save(cwd, tracking)
 
   return results
+}
+
+function findRootReadme(files: DiscoveredFile[]): DiscoveredFile | undefined {
+  return files.find((f) => f.relativePath.toLowerCase() === "readme.md")
+}
+
+function inferRepoName(repoUrl: string): string | undefined {
+  const match = repoUrl.match(/([^/]+)(?:\.git)?$/)
+  return match?.[1]
+}
+
+function isReadme(filePath: string): boolean {
+  return basename(filePath).toLowerCase() === "readme.md"
+}
+
+function findReadmeIn(dir: string, files: Map<string, DiscoveredFile>): DiscoveredFile | undefined {
+  const prefix = dir === "." ? "" : `${dir}/`
+  for (const [path, file] of files) {
+    if (isReadme(path) && normDir(dirname(path)) === normDir(dir)) {
+      return file
+    }
+    void prefix
+  }
+  return undefined
+}
+
+function normDir(dir: string): string {
+  if (dir === "" || dir === ".") return "."
+  return dir.replace(/\/$/, "")
+}
+
+export function inferParentSlug(
+  filePath: string,
+  files: Map<string, DiscoveredFile>,
+  rootSlug: string,
+): string {
+  const dir = normDir(dirname(filePath))
+
+  if (dir === ".") return rootSlug
+
+  if (isReadme(filePath)) {
+    const parentDir = normDir(dirname(dir))
+    if (parentDir === ".") return rootSlug
+    const parentReadme = findReadmeIn(parentDir, files)
+    if (parentReadme) return parentReadme.frontmatter.slug
+    return walkUpForParent(parentDir, files, rootSlug)
+  }
+
+  const dirReadme = findReadmeIn(dir, files)
+  if (dirReadme) return dirReadme.frontmatter.slug
+
+  return walkUpForParent(dir, files, rootSlug)
+}
+
+function walkUpForParent(
+  startDir: string,
+  files: Map<string, DiscoveredFile>,
+  rootSlug: string,
+): string {
+  let dir = startDir
+  while (dir !== "." && dir !== "") {
+    dir = normDir(dirname(dir))
+    if (dir === ".") break
+    const readme = findReadmeIn(dir, files)
+    if (readme) return readme.frontmatter.slug
+  }
+  return rootSlug
 }
 
 function createAdapter(config: AdapterConfig): Adapter {
@@ -201,8 +299,8 @@ async function resolveExplicitFiles(paths: string[], cwd: string): Promise<strin
 async function parseFiles(
   files: string[],
   cwd: string,
-): Promise<(ParsedFile & { path: string; relativePath: string })[]> {
-  const results: (ParsedFile & { path: string; relativePath: string })[] = []
+): Promise<DiscoveredFile[]> {
+  const results: DiscoveredFile[] = []
   for (const file of files) {
     const raw = await Deno.readTextFile(file)
     const parsed = parseFrontmatter(raw, file)
@@ -219,12 +317,14 @@ async function parseFiles(
 }
 
 function buildPages(
-  files: (ParsedFile & { path: string; relativePath: string })[],
+  files: DiscoveredFile[],
   config: MirrorConfig,
   mirror: AdapterConfig,
   repoUrl: string,
   adapter: Adapter,
-  tracking?: state.StateData,
+  tracking: state.StateData | undefined,
+  rootSlug: string,
+  fileMap: Map<string, DiscoveredFile>,
 ): Page[] {
   return files
     .sort((a, b) => (a.frontmatter.order ?? 999) - (b.frontmatter.order ?? 999))
@@ -232,19 +332,42 @@ function buildPages(
       const sourceUrl = `${repoUrl}/blob/main/${file.relativePath}`
       const content = adapter.convertMarkdown(file.content, sourceUrl, mirror.banner !== false)
       const tracked = tracking ? state.lookup(tracking, adapter.name, file.relativePath) : undefined
+
+      let parentSlug: string | undefined
+      if (file.frontmatter.parent === false) {
+        parentSlug = undefined
+      } else if (typeof file.frontmatter.parent === "string") {
+        parentSlug = slugify(file.frontmatter.parent)
+      } else {
+        parentSlug = inferParentSlug(file.relativePath, fileMap, rootSlug)
+      }
+
       return {
         slug: file.frontmatter.slug,
         title: file.frontmatter.title,
         content,
-        parentSlug: file.frontmatter.parent
-          ? file.frontmatter.parent.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-          : undefined,
+        parentSlug,
         tags: [...(config.defaults.tags ?? []), ...file.frontmatter.tags],
         order: file.frontmatter.order ?? 999,
         remoteId: tracked?.id,
         sourcePath: file.relativePath,
       }
     })
+}
+
+export function detectSlugCollisions(pages: Page[]): void {
+  const seen = new Map<string, string>()
+  for (const page of pages) {
+    const existing = seen.get(page.slug)
+    if (existing) {
+      throw new SyncConflictError(
+        page.slug,
+        `Duplicate slug '${page.slug}' produced by '${existing}' and '${page.sourcePath}'.`,
+        `Add an explicit 'slug' in frontmatter to one of the conflicting files to make them unique.`,
+      )
+    }
+    seen.set(page.slug, page.sourcePath ?? page.title)
+  }
 }
 
 function findStaleEntries(

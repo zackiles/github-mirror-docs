@@ -222,10 +222,10 @@ Deno.test({
       const failed = results[0].results.filter((r) => r.action === "failed")
 
       assertEquals(failed.length, 0, `No pages should fail: ${JSON.stringify(failed)}`)
-      assertEquals(created.length, 3, "Should create 3 pages (README, setup, api -- not draft)")
+      assertEquals(created.length, 2, "Should create 2 pages (setup, api -- README becomes root page, draft excluded)")
 
       const slugs = created.map((r) => r.slug).sort()
-      assertEquals(slugs, ["api-reference", "setup-guide", "test-project"])
+      assertEquals(slugs, ["api-reference", "setup-guide"])
 
       for (const r of created) {
         assert(r.url, `Created page ${r.slug} should have a URL`)
@@ -243,6 +243,12 @@ Deno.test({
       const setupCreate = pageCreates.find((r) => r.body?.includes("setup-guide"))
       assert(setupCreate, "Should have created setup-guide page")
       assert(setupCreate.body?.includes("Mirrored from GitHub"), "Page body should contain banner")
+
+      const setupBody = JSON.parse(setupCreate.body!)
+      assertEquals(setupBody.parent, "test-project", "Pages should nest under root page (slug from README title)")
+
+      const rootPageCreate = pageCreates.find((r) => r.body?.includes("test-project") && r.body?.includes("Test Project"))
+      assert(rootPageCreate, "Root page should be created with README content")
 
     } finally {
       Deno.chdir(origCwd)
@@ -322,10 +328,10 @@ Deno.test({
 
       assertEquals(failed.length, 0, `No pages should fail on second sync: ${JSON.stringify(failed)}`)
       assertEquals(created.length, 0, "Second sync should not create new pages")
-      assertEquals(updated.length, 3, "Second sync should update all 3 pages")
+      assertEquals(updated.length, 2, "Second sync should update 2 pages (README updates root page separately)")
 
       const putRequests = requests.filter((r) => r.method === "PUT" && r.path.startsWith("/api/pages/"))
-      assert(putRequests.length >= 3, "Should have PUT requests for updates")
+      assert(putRequests.length >= 2, "Should have PUT requests for updates")
 
     } finally {
       Deno.chdir(origCwd)

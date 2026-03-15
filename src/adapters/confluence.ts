@@ -1,4 +1,5 @@
 import type { Adapter, AdapterConfig, Page, SyncResult } from "./types.ts"
+import { SyncConflictError } from "./types.ts"
 import { toConfluenceStorage } from "../markdown.ts"
 import { contentHash } from "../engine.ts"
 
@@ -89,27 +90,56 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
       }
     },
 
-    async ensureRootPage(collection: string, title: string): Promise<{ id: string; slug: string }> {
+    async ensureRootPage(collection: string, title: string, content?: string): Promise<{ id: string; slug: string }> {
       const spaceResult = await adapter.ensureCollection(collection)
+      const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
       const searchRes = await api(
         `/wiki/api/v2/pages?space-id=${spaceResult.id}&title=${encodeURIComponent(title)}&limit=1`,
       )
       const searchData = await searchRes.json()
       if (searchData.results?.length > 0) {
         const page = searchData.results[0]
-        return { id: page.id, slug: title.toLowerCase().replace(/[^a-z0-9]+/g, "-") }
+        const markerSlug = await getProperty(page.id, "docs-mirror-slug")
+        const ownedByUs = markerSlug !== null
+        if (!ownedByUs) {
+          throw new SyncConflictError(
+            title,
+            `A Confluence page titled '${title}' already exists in space '${collection}' (id: ${page.id}) but is not managed by docs-mirror.`,
+            `Set 'root_page' in .docs-mirror.yml to a unique title, or delete/rename the existing page in Confluence.`,
+          )
+        }
+        if (content) {
+          const existingHash = await getProperty(page.id, "docs-mirror-hash")
+          const newHash = await contentHash(content)
+          if (existingHash !== newHash) {
+            const updateRes = await api(`/wiki/api/v2/pages/${page.id}`, {
+              method: "PUT",
+              body: JSON.stringify({
+                id: page.id,
+                status: "current",
+                title,
+                version: { number: (page.version?.number ?? 1) + 1 },
+                body: { representation: "storage", value: content },
+              }),
+            })
+            if (!updateRes.ok) {
+              const body = await updateRes.text()
+              throw new Error(`Failed to update root page '${title}' (${page.id}): ${body}`)
+            }
+            await setProperty(page.id, "docs-mirror-hash", newHash)
+          }
+        }
+        return { id: page.id, slug }
       }
 
+      const bodyValue = content ?? `<p>Root page for mirrored documentation.</p>`
       const createRes = await api("/wiki/api/v2/pages", {
         method: "POST",
         body: JSON.stringify({
           spaceId: spaceResult.id,
           title,
           status: "current",
-          body: {
-            representation: "storage",
-            value: `<p>Root page for mirrored documentation.</p>`,
-          },
+          body: { representation: "storage", value: bodyValue },
         }),
       })
       if (!createRes.ok) {
@@ -117,7 +147,11 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
         throw new Error(`Failed to create root page '${title}': ${body}`)
       }
       const page = await createRes.json()
-      return { id: page.id, slug: title.toLowerCase().replace(/[^a-z0-9]+/g, "-") }
+      await setProperty(page.id, "docs-mirror-slug", slug)
+      if (content) {
+        await setProperty(page.id, "docs-mirror-hash", await contentHash(content))
+      }
+      return { id: page.id, slug }
     },
 
     convertMarkdown(markdown: string, sourceUrl: string, banner: boolean): string {
@@ -154,7 +188,17 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
             })
             if (!updateRes.ok) {
               const body = await updateRes.text()
-              results.push({ slug: page.slug, action: "failed", error: body })
+              const status = updateRes.status
+              if (status === 409) {
+                results.push({
+                  slug: page.slug,
+                  action: "failed",
+                  error: `Version conflict updating '${page.title}' (${existing.id}). ` +
+                    `The page may have been edited in Confluence since last sync. Re-run sync to retry. API response: ${body}`,
+                })
+              } else {
+                results.push({ slug: page.slug, action: "failed", error: `Update failed (${status}): ${body}` })
+              }
               continue
             }
 
@@ -170,19 +214,44 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
               url: `${state.baseUrl}/wiki${pageData._links?.webui ?? ""}`,
             })
           } else {
+            let parentId: string | undefined
+            if (page.parentSlug) {
+              const parentPage = await findPageBySlug(spaceResult.id, page.parentSlug)
+              if (!parentPage) {
+                results.push({
+                  slug: page.slug,
+                  action: "failed",
+                  error: `Parent page with slug '${page.parentSlug}' not found in Confluence space. ` +
+                    `Verify the parent exists and is managed by docs-mirror, or remove the 'parent' field from frontmatter.`,
+                })
+                continue
+              }
+              parentId = parentPage.id
+            }
+
             const createRes = await api("/wiki/api/v2/pages", {
               method: "POST",
               body: JSON.stringify({
                 spaceId: spaceResult.id,
                 title: page.title,
                 status: "current",
-                parentId: page.parentSlug ? (await findPageBySlug(spaceResult.id, page.parentSlug))?.id : undefined,
+                parentId,
                 body: { representation: "storage", value: page.content },
               }),
             })
             if (!createRes.ok) {
               const body = await createRes.text()
-              results.push({ slug: page.slug, action: "failed", error: body })
+              const status = createRes.status
+              if (status === 409) {
+                results.push({
+                  slug: page.slug,
+                  action: "failed",
+                  error: `Title conflict: a page titled '${page.title}' already exists in this Confluence space. ` +
+                    `Change the title in frontmatter or rename the conflicting page in Confluence. API response: ${body}`,
+                })
+              } else {
+                results.push({ slug: page.slug, action: "failed", error: `Create failed (${status}): ${body}` })
+              }
               continue
             }
 
@@ -199,6 +268,7 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
             })
           }
         } catch (err) {
+          if (err instanceof SyncConflictError) throw err
           results.push({
             slug: page.slug,
             action: "failed",
