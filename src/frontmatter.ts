@@ -10,7 +10,7 @@ export interface Frontmatter {
   title: string
   publish: boolean
   collection?: string
-  parent?: string
+  parent?: string | false
   tags: string[]
   order?: number
   slug: string
@@ -38,11 +38,18 @@ export function resolve(
   filePath: string,
 ): Frontmatter {
   const title = (attrs.title as string) || extractTitle(body) || titleFromPath(filePath)
+  const parentRaw = attrs.parent
+  const parent: string | false | undefined =
+    parentRaw === false || parentRaw === "false" || parentRaw === ""
+      ? false
+      : typeof parentRaw === "string"
+        ? parentRaw
+        : undefined
   return {
     title,
     publish: attrs.publish !== false,
     collection: attrs.collection as string | undefined,
-    parent: attrs.parent as string | undefined,
+    parent,
     tags: Array.isArray(attrs.tags) ? attrs.tags.filter((t): t is string => typeof t === "string") : [],
     order: typeof attrs.order === "number" ? attrs.order : undefined,
     slug: (attrs.slug as string) || slugify(title),

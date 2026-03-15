@@ -130,7 +130,6 @@ export function createWebhookAdapter(_config: AdapterConfig): Adapter {
 
     async ensureRootPage(collection: string, title: string, pageContent?: string): Promise<{ id: string; slug: string }> {
       const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-      const bodyContent = pageContent ?? `Root page for mirrored documentation.`
       const vars = { collection, slug, title }
       const getRes = await callEndpoint(template.endpoints.get_page, vars)
 
@@ -140,7 +139,7 @@ export function createWebhookAdapter(_config: AdapterConfig): Adapter {
         if (pageContent) {
           await callEndpoint(template.endpoints.update_page, {
             ...vars,
-            content: bodyContent,
+            content: pageContent,
             parent: "",
             tags: "[]",
             page_id: existingId,
@@ -150,6 +149,7 @@ export function createWebhookAdapter(_config: AdapterConfig): Adapter {
         return { id: existingId, slug }
       }
 
+      const bodyContent = pageContent ?? `Root page for mirrored documentation.`
       const createRes = await callEndpoint(template.endpoints.create_page, {
         ...vars,
         content: bodyContent,

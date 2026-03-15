@@ -92,29 +92,38 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
     async ensureRootPage(collection: string, title: string, content?: string): Promise<{ id: string; slug: string }> {
       const spaceResult = await adapter.ensureCollection(collection)
       const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-      const bodyValue = content ?? `<p>Root page for mirrored documentation.</p>`
       const searchRes = await api(
         `/wiki/api/v2/pages?space-id=${spaceResult.id}&title=${encodeURIComponent(title)}&limit=1`,
       )
       const searchData = await searchRes.json()
       if (searchData.results?.length > 0) {
         const page = searchData.results[0]
-        if (content) {
-          await api(`/wiki/api/v2/pages/${page.id}`, {
-            method: "PUT",
-            body: JSON.stringify({
-              id: page.id,
-              status: "current",
-              title,
-              version: { number: (page.version?.number ?? 1) + 1 },
-              body: { representation: "storage", value: bodyValue },
-            }),
-          })
+        const markerSlug = await getProperty(page.id, "docs-mirror-slug")
+        const ownedByUs = markerSlug !== null
+        if (content && ownedByUs) {
+          const existingHash = await getProperty(page.id, "docs-mirror-hash")
+          const newHash = await contentHash(content)
+          if (existingHash !== newHash) {
+            await api(`/wiki/api/v2/pages/${page.id}`, {
+              method: "PUT",
+              body: JSON.stringify({
+                id: page.id,
+                status: "current",
+                title,
+                version: { number: (page.version?.number ?? 1) + 1 },
+                body: { representation: "storage", value: content },
+              }),
+            })
+            await setProperty(page.id, "docs-mirror-hash", newHash)
+          }
         }
-        await setProperty(page.id, "docs-mirror-slug", slug)
+        if (!ownedByUs) {
+          await setProperty(page.id, "docs-mirror-slug", slug)
+        }
         return { id: page.id, slug }
       }
 
+      const bodyValue = content ?? `<p>Root page for mirrored documentation.</p>`
       const createRes = await api("/wiki/api/v2/pages", {
         method: "POST",
         body: JSON.stringify({
@@ -130,6 +139,9 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
       }
       const page = await createRes.json()
       await setProperty(page.id, "docs-mirror-slug", slug)
+      if (content) {
+        await setProperty(page.id, "docs-mirror-hash", await contentHash(content))
+      }
       return { id: page.id, slug }
     },
 

@@ -245,9 +245,9 @@ Deno.test({
       assert(setupCreate.body?.includes("Mirrored from GitHub"), "Page body should contain banner")
 
       const setupBody = JSON.parse(setupCreate.body!)
-      assertEquals(setupBody.parent, "test-org-test-repo", "Pages should nest under root page by default")
+      assertEquals(setupBody.parent, "test-project", "Pages should nest under root page (slug from README title)")
 
-      const rootPageCreate = pageCreates.find((r) => r.body?.includes("test-org-test-repo") && r.body?.includes("Test Project"))
+      const rootPageCreate = pageCreates.find((r) => r.body?.includes("test-project") && r.body?.includes("Test Project"))
       assert(rootPageCreate, "Root page should be created with README content")
 
     } finally {

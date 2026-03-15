@@ -99,15 +99,19 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
       const existing = data.documents.nodes.find((d) => d.content?.includes(marker))
       if (existing) {
         if (pageContent) {
-          const contentWithMarker = `${pageContent}\n\n<!-- ${marker} -->`
-          await gql(
-            `mutation($id: String!, $title: String!, $content: String!) {
-              documentUpdate(id: $id, input: { title: $title, content: $content }) {
-                document { id }
-              }
-            }`,
-            { id: existing.id, title, content: contentWithMarker },
-          )
+          const existingHashMatch = existing.content?.match(/docs-mirror:slug=[^&]+&hash=([a-f0-9]+)/)
+          const newHash = await contentHash(pageContent)
+          if (existingHashMatch?.[1] !== newHash) {
+            const contentWithMarker = `${pageContent}\n\n<!-- docs-mirror:slug=${slug}&hash=${newHash} -->`
+            await gql(
+              `mutation($id: String!, $title: String!, $content: String!) {
+                documentUpdate(id: $id, input: { title: $title, content: $content }) {
+                  document { id }
+                }
+              }`,
+              { id: existing.id, title, content: contentWithMarker },
+            )
+          }
         }
         return { id: existing.id, slug }
       }

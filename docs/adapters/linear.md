@@ -37,22 +37,53 @@ collection: Engineering Docs
 
 mirrors:
   - adapter: linear
+```
+
+That's the minimal config. docs-mirror will:
+
+- Create or find the "Engineering Docs" Project
+- Use your README.md as the root document (title from H1)
+- Sync all docs as documents in the project
+
+For more control:
+
+```yaml
+mirrors:
+  - adapter: linear
     collection: Engineering Docs
-    root_page: acme/my-service
+    root_page: My Service Docs
     banner: true
 ```
 
 | Field | Description |
 |-------|-------------|
 | `collection` | Project name. Created under your first team if it does not exist. |
-| `root_page` | Root document title. Defaults to `{org}/{repo}` from git remote. |
+| `root_page` | Root document title. Defaults to README.md title, then repo name. |
 | `banner` | Add "Mirrored from GitHub" blockquote. Default `true`. |
 
-## Collections and Projects
+## How hierarchy maps to Linear
 
-The `collection` in config maps to a Linear Project. Each mirror can use a different collection. If the project does not exist, docs-mirror creates it under the first team in your workspace.
+Linear Documents are **flat** — there is no parent-child nesting. docs-mirror adapts to this model:
 
-Per-file `collection` in frontmatter overrides the config for that file.
+- All mirrored documents are placed in a single Linear Project
+- The root document (from README.md) serves as an overview/index
+- Other documents are ordered by their `order` frontmatter field
+- Directory-based hierarchy from the repository is reflected in ordering, not nesting
+
+```
+Project: Engineering Docs
+  Documents:
+    - My Service (root — from README.md)
+    - Getting Started
+    - Configuration
+    - API (from docs/api/README.md)
+    - Endpoints
+    - Authentication
+    - Pulumi
+    - Terraform
+```
+
+The `parent` frontmatter field is accepted but has no structural effect in Linear — it is stored in the document marker for metadata purposes only. If you also mirror to Confluence, the same `parent` field produces real nesting there.
 
 ## Markdown-native advantage
 
