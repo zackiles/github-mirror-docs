@@ -1,5 +1,5 @@
 import { assertEquals, assertStringIncludes } from "@std/assert"
-import { toLinearMarkdown, rewriteLinks } from "../../src/markdown.ts"
+import { rewriteLinks, toLinearMarkdown } from "../../src/markdown.ts"
 
 const SOURCE_URL = "https://github.com/acme/repo/blob/main/docs/setup.md"
 

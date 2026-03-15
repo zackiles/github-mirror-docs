@@ -21,7 +21,10 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
 
   async function api(path: string, options?: RequestInit): Promise<Response> {
     const url = `${state.baseUrl}${path}`
-    const response = await fetchWithRetry(url, { ...options, headers: { ...headers(), ...options?.headers } })
+    const response = await fetchWithRetry(url, {
+      ...options,
+      headers: { ...headers(), ...options?.headers },
+    })
     return response
   }
 
@@ -77,7 +80,11 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
 
       const createRes = await api("/wiki/api/v2/spaces", {
         method: "POST",
-        body: JSON.stringify({ name, key, description: { plain: { value: `Mirrored docs: ${name}`, representation: "plain" } } }),
+        body: JSON.stringify({
+          name,
+          key,
+          description: { plain: { value: `Mirrored docs: ${name}`, representation: "plain" } },
+        }),
       })
       if (!createRes.ok) {
         const body = await createRes.text()
@@ -90,7 +97,11 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
       }
     },
 
-    async ensureRootPage(collection: string, title: string, content?: string): Promise<{ id: string; slug: string }> {
+    async ensureRootPage(
+      collection: string,
+      title: string,
+      content?: string,
+    ): Promise<{ id: string; slug: string }> {
       const spaceResult = await adapter.ensureCollection(collection)
       const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
       const searchRes = await api(
@@ -197,7 +208,11 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
                     `The page may have been edited in Confluence since last sync. Re-run sync to retry. API response: ${body}`,
                 })
               } else {
-                results.push({ slug: page.slug, action: "failed", error: `Update failed (${status}): ${body}` })
+                results.push({
+                  slug: page.slug,
+                  action: "failed",
+                  error: `Update failed (${status}): ${body}`,
+                })
               }
               continue
             }
@@ -221,7 +236,8 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
                 results.push({
                   slug: page.slug,
                   action: "failed",
-                  error: `Parent page with slug '${page.parentSlug}' not found in Confluence space. ` +
+                  error:
+                    `Parent page with slug '${page.parentSlug}' not found in Confluence space. ` +
                     `Verify the parent exists and is managed by docs-mirror, or remove the 'parent' field from frontmatter.`,
                 })
                 continue
@@ -246,11 +262,16 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
                 results.push({
                   slug: page.slug,
                   action: "failed",
-                  error: `Title conflict: a page titled '${page.title}' already exists in this Confluence space. ` +
+                  error:
+                    `Title conflict: a page titled '${page.title}' already exists in this Confluence space. ` +
                     `Change the title in frontmatter or rename the conflicting page in Confluence. API response: ${body}`,
                 })
               } else {
-                results.push({ slug: page.slug, action: "failed", error: `Create failed (${status}): ${body}` })
+                results.push({
+                  slug: page.slug,
+                  action: "failed",
+                  error: `Create failed (${status}): ${body}`,
+                })
               }
               continue
             }
@@ -366,7 +387,11 @@ export function createConfluenceAdapter(_config: AdapterConfig): Adapter {
       if (prop) {
         await api(`/wiki/api/v2/pages/${pageId}/properties/${prop.id}`, {
           method: "PUT",
-          body: JSON.stringify({ key, value, version: { number: (prop.version?.number ?? 0) + 1 } }),
+          body: JSON.stringify({
+            key,
+            value,
+            version: { number: (prop.version?.number ?? 0) + 1 },
+          }),
         })
         return
       }

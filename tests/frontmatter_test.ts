@@ -1,5 +1,5 @@
 import { assertEquals, assertStringIncludes } from "@std/assert"
-import { parse, inject, extractTitle, slugify, resolve } from "../src/frontmatter.ts"
+import { extractTitle, inject, parse, resolve, slugify } from "../src/frontmatter.ts"
 
 Deno.test("parse - extracts frontmatter from markdown with YAML header", () => {
   const raw = `---

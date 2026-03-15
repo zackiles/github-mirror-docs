@@ -11,7 +11,7 @@ This is a simple test document.
 
 ## Section One
 
-Some content here with **bold** and *italic* text.
+Some content here with **bold** and _italic_ text.
 
 - Item one
 - Item two
