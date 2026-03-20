@@ -4,6 +4,7 @@ import { relative } from "@std/path"
 import { stringify as stringifyYaml } from "@std/yaml"
 import { extractTitle, inject, parse as parseFrontmatter, slugify } from "./frontmatter.ts"
 import { sync } from "./engine.ts"
+import { stage } from "./stage.ts"
 import {
   detectAtlassianCli,
   detectGh,
@@ -114,6 +115,9 @@ async function main() {
   switch (command) {
     case "init":
       await init(flags, rest.slice(1))
+      break
+    case "stage":
+      await runStage(flags, rest.slice(1))
       break
     case "sync":
       await runSync(flags, rest.slice(1))
@@ -380,12 +384,15 @@ async function init(global: GlobalFlags, args: string[]) {
 
   const cwd = Deno.cwd()
   const files: { path: string; rel: string; title: string }[] = []
-  for await (const entry of expandGlob("{README.md,docs/**/*.md}", { root: cwd })) {
-    if (!entry.isFile) continue
-    const rel = relative(cwd, entry.path)
-    const raw = await Deno.readTextFile(entry.path)
-    const parsed = parseFrontmatter(raw, entry.path)
-    files.push({ path: entry.path, rel, title: parsed.frontmatter.title })
+  for (const pattern of ["README.md", "docs/**/*.md"]) {
+    for await (const entry of expandGlob(pattern, { root: cwd })) {
+      if (!entry.isFile) continue
+      if (files.some((f) => f.path === entry.path)) continue
+      const rel = relative(cwd, entry.path)
+      const raw = await Deno.readTextFile(entry.path)
+      const parsed = parseFrontmatter(raw, entry.path)
+      files.push({ path: entry.path, rel, title: parsed.frontmatter.title })
+    }
   }
 
   if (files.length === 0) {
@@ -687,6 +694,68 @@ function printSecretInstructions(adapters: string[]) {
   }
 }
 
+interface StageFlags {
+  agent?: string
+  key?: string
+  basePath: string
+  configPath: string
+  dryRun: boolean
+}
+
+function parseStageFlags(args: string[]): StageFlags {
+  const result: StageFlags = {
+    basePath: Deno.cwd(),
+    configPath: ".docs-mirror.yml",
+    dryRun: false,
+  }
+
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case "--agent":
+        result.agent = args[++i]
+        break
+      case "--key":
+        result.key = args[++i]
+        break
+      case "--config":
+        result.configPath = args[++i]
+        break
+      case "--dry-run":
+        result.dryRun = true
+        break
+      default:
+        if (!args[i].startsWith("--")) {
+          result.basePath = args[i]
+        }
+    }
+  }
+  return result
+}
+
+async function runStage(global: GlobalFlags, args: string[]) {
+  console.log(`docs-mirror v${VERSION} — stage\n`)
+  const flags = parseStageFlags(args)
+
+  const results = await stage({
+    basePath: flags.basePath,
+    configPath: flags.configPath,
+    interactive: global.interactive,
+    verbose: global.verbose,
+    dryRun: flags.dryRun,
+    agent: flags.agent,
+    key: flags.key,
+  })
+
+  const injected = results.filter((r) => r.action === "injected").length
+  const merged = results.filter((r) => r.action === "merged").length
+  const skipped = results.filter((r) => r.action === "skipped").length
+  const unchanged = results.filter((r) => r.action === "unchanged").length
+
+  console.log(
+    `\n✔ Stage complete: ${injected} injected, ${merged} merged, ${skipped} skipped, ${unchanged} unchanged`,
+  )
+}
+
 async function runSync(global: GlobalFlags, args: string[]) {
   const flags = parseFlags(args)
 
@@ -784,14 +853,16 @@ async function uninstall(global: GlobalFlags, args: string[]) {
 
   if (stripFm) {
     console.log("Stripping frontmatter from markdown files...")
-    for await (const entry of expandGlob("{README.md,docs/**/*.md}")) {
-      if (!entry.isFile) continue
-      const raw = await Deno.readTextFile(entry.path)
-      if (raw.startsWith("---")) {
-        const end = raw.indexOf("---", 3)
-        if (end !== -1) {
-          const stripped = raw.slice(end + 3).replace(/^\n+/, "")
-          await Deno.writeTextFile(entry.path, stripped)
+    for (const pattern of ["README.md", "docs/**/*.md"]) {
+      for await (const entry of expandGlob(pattern)) {
+        if (!entry.isFile) continue
+        const raw = await Deno.readTextFile(entry.path)
+        if (raw.startsWith("---")) {
+          const end = raw.indexOf("---", 3)
+          if (end !== -1) {
+            const stripped = raw.slice(end + 3).replace(/^\n+/, "")
+            await Deno.writeTextFile(entry.path, stripped)
+          }
         }
       }
     }
@@ -880,6 +951,7 @@ Usage:
 
 Commands:
   init                 Interactive setup (detects adapters from flags/env)
+  stage [options]      Add frontmatter to files missing it (normal or agent mode)
   sync [options]       Sync documentation to mirrors
   uninstall            Remove docs-mirror config from this repo
   uninstall-binary     Remove the docs-mirror binary from PATH
@@ -911,6 +983,13 @@ Sync options:
   --dry-run                  Show what would happen without making changes
   --config <path>            Path to config file (default: .docs-mirror.yml)
   <file>                     Sync a specific file
+
+Stage options:
+  --agent <path>             Path to Claude CLI or Cursor CLI for agent mode
+  --key <value>              API key (sets ANTHROPIC_API_KEY or CURSOR_API_KEY)
+  --config <path>            Path to config file (default: .docs-mirror.yml)
+  --dry-run                  Show what would happen without writing files
+  <path>                     Base path to scan (default: current directory)
 
 Uninstall options:
   --remove-workflow          Remove workflow file (default in non-interactive)
