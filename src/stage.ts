@@ -1,4 +1,4 @@
-import { expandGlob } from "@std/fs"
+import { exists, expandGlob } from "@std/fs"
 import { basename, relative, resolve } from "@std/path"
 import { type Frontmatter, inject, parse as parseFrontmatter, slugify } from "./frontmatter.ts"
 
@@ -14,27 +14,24 @@ interface FileEntry {
   needsStaging: boolean
 }
 
-interface AgentFileResult {
-  path: string
-  frontmatter: {
-    title: string
-    slug: string
-    publish: boolean
-    tags?: string[]
-    order?: number
-    collection?: string
-  }
-  fixHeading?: boolean
-}
-
 interface AgentResult {
-  files: AgentFileResult[]
+  files: {
+    path: string
+    frontmatter: {
+      title: string
+      slug: string
+      publish: boolean
+      tags?: string[]
+      order?: number
+      collection?: string
+    }
+    fixHeading?: boolean
+  }[]
 }
 
 export interface StageOptions {
   basePath: string
   configPath: string
-  interactive: boolean
   verbose: boolean
   dryRun: boolean
   agent?: string
@@ -63,10 +60,8 @@ export async function stage(options: StageOptions): Promise<StageResult[]> {
     console.log(`  ${t.relativePath} (${t.hasFrontmatter ? "incomplete" : "missing"})`)
   }
 
-  if (options.agent) {
-    return await runAgent(options, base, all, targets)
-  }
-  return await runNormal(options, base, all, targets)
+  if (options.agent) return await runAgent(options, base, all, targets)
+  return await runNormal(options, base, targets)
 }
 
 export async function scanFiles(base: string): Promise<FileEntry[]> {
@@ -81,7 +76,6 @@ export async function scanFiles(base: string): Promise<FileEntry[]> {
       const raw = await Deno.readTextFile(entry.path)
       const hasFm = raw.startsWith("---")
       const parsed = parseFrontmatter(raw, entry.path)
-      const complete = hasFm && hasCoreFields(raw)
 
       entries.push({
         path: entry.path,
@@ -90,7 +84,7 @@ export async function scanFiles(base: string): Promise<FileEntry[]> {
         hasFrontmatter: hasFm,
         frontmatter: parsed.frontmatter,
         content: parsed.content,
-        needsStaging: !complete,
+        needsStaging: !hasFm || !hasCoreFields(raw),
       })
     }
   }
@@ -107,7 +101,6 @@ export function hasCoreFields(raw: string): boolean {
 async function runNormal(
   options: StageOptions,
   base: string,
-  _all: FileEntry[],
   targets: FileEntry[],
 ): Promise<StageResult[]> {
   let collection: string | undefined
@@ -118,47 +111,51 @@ async function runNormal(
   } catch { /* config file not required */ }
 
   const results: StageResult[] = []
-
   for (const entry of targets) {
-    const fields: Partial<Frontmatter> = {
-      title: entry.frontmatter.title,
-      slug: slugify(entry.frontmatter.title),
-      publish: true,
-    }
-    if (collection) fields.collection = collection
-
-    if (options.dryRun) {
-      console.log(
-        `  [dry-run] ${entry.relativePath}: title="${fields.title}" slug="${fields.slug}"`,
-      )
-      results.push({
-        path: entry.path,
-        relativePath: entry.relativePath,
-        action: "skipped",
-        frontmatter: fields,
-      })
-      continue
-    }
-
-    let raw = entry.raw
-    if (!hasH1(entry.content)) {
-      raw = fixHeading(raw, entry.frontmatter.title)
-    }
-
-    const updated = inject(raw, fields, entry.path)
-    if (updated !== entry.raw) {
-      await Deno.writeTextFile(entry.path, updated)
-      results.push({
-        path: entry.path,
-        relativePath: entry.relativePath,
-        action: entry.hasFrontmatter ? "merged" : "injected",
-        frontmatter: fields,
-      })
-    } else {
-      results.push({ path: entry.path, relativePath: entry.relativePath, action: "unchanged" })
-    }
+    results.push(
+      await applyEntry(options, entry, {
+        title: entry.frontmatter.title,
+        slug: slugify(entry.frontmatter.title),
+        publish: true,
+        ...(collection ? { collection } : {}),
+      }),
+    )
   }
   return results
+}
+
+async function applyEntry(
+  options: StageOptions,
+  entry: FileEntry,
+  fields: Partial<Frontmatter>,
+  shouldFixHeading = true,
+): Promise<StageResult> {
+  if (options.dryRun) {
+    console.log(`  [dry-run] ${entry.relativePath}: title="${fields.title}" slug="${fields.slug}"`)
+    return {
+      path: entry.path,
+      relativePath: entry.relativePath,
+      action: "skipped",
+      frontmatter: fields,
+    }
+  }
+
+  let raw = entry.raw
+  if (shouldFixHeading && !hasH1(entry.content)) {
+    raw = fixHeading(raw, fields.title ?? entry.frontmatter.title)
+  }
+
+  const updated = inject(raw, fields, entry.path)
+  if (updated !== entry.raw) {
+    await Deno.writeTextFile(entry.path, updated)
+    return {
+      path: entry.path,
+      relativePath: entry.relativePath,
+      action: entry.hasFrontmatter ? "merged" : "injected",
+      frontmatter: fields,
+    }
+  }
+  return { path: entry.path, relativePath: entry.relativePath, action: "unchanged" }
 }
 
 export function hasH1(body: string): boolean {
@@ -166,78 +163,62 @@ export function hasH1(body: string): boolean {
 }
 
 export function fixHeading(raw: string, title: string): string {
+  const fix = (body: string): string => {
+    if (hasH1(body)) return body
+    const sub = body.match(/^(#{2,6})\s+(.+)$/m)
+    if (sub) return body.replace(sub[0], `# ${sub[2]}`)
+    return `\n# ${title}\n\n${body.replace(/^\n+/, "")}`
+  }
+
   if (raw.startsWith("---")) {
     const end = raw.indexOf("---", 3)
-    if (end !== -1) {
-      return raw.slice(0, end + 3) + fixBody(raw.slice(end + 3), title)
-    }
+    if (end !== -1) return raw.slice(0, end + 3) + fix(raw.slice(end + 3))
   }
-  return fixBody(raw, title)
-}
-
-export function fixBody(body: string, title: string): string {
-  if (/^#\s+/m.test(body)) return body
-
-  const sub = body.match(/^(#{2,6})\s+(.+)$/m)
-  if (sub) return body.replace(sub[0], `# ${sub[2]}`)
-
-  const trimmed = body.replace(/^\n+/, "")
-  return `\n# ${title}\n\n${trimmed}`
-}
-
-function detectTool(agentPath: string): Tool {
-  const name = basename(agentPath).toLowerCase().replace(/\.exe$/, "")
-  if (name.includes("claude")) return "claude"
-  if (name.includes("cursor") || name === "agent") return "cursor"
-
-  try {
-    const cmd = new Deno.Command(agentPath, {
-      args: ["--version"],
-      stdout: "piped",
-      stderr: "piped",
-    })
-    const out = cmd.outputSync()
-    const combined = new TextDecoder().decode(out.stdout).toLowerCase() +
-      new TextDecoder().decode(out.stderr).toLowerCase()
-    if (combined.includes("claude")) return "claude"
-    if (combined.includes("cursor") || combined.includes("agent")) return "cursor"
-  } catch { /* fall through */ }
-
-  throw new Error(
-    `Cannot detect tool type for "${agentPath}". Expected a Claude CLI or Cursor CLI executable.`,
-  )
+  return fix(raw)
 }
 
 function validateTool(
   agentPath: string,
   key: string | undefined,
 ): { tool: Tool; resolvedKey: string } {
-  const tool = detectTool(agentPath)
-  const envName = tool === "claude" ? "ANTHROPIC_API_KEY" : "CURSOR_API_KEY"
-  const resolvedKey = key ?? Deno.env.get(envName)
-
-  if (!resolvedKey) {
-    throw new Error(`No API key provided. Pass --key <value> or set ${envName}.`)
-  }
+  const name = basename(agentPath).toLowerCase().replace(/\.exe$/, "")
+  let tool: Tool | undefined
+  if (name.includes("claude")) tool = "claude"
+  else if (name.includes("cursor") || name === "agent") tool = "cursor"
 
   try {
-    const cmd = new Deno.Command(agentPath, {
+    const out = new Deno.Command(agentPath, {
       args: ["--version"],
       stdout: "piped",
       stderr: "piped",
-    })
-    const out = cmd.outputSync()
+    }).outputSync()
     if (!out.success) {
-      const stderr = new TextDecoder().decode(out.stderr).trim()
-      throw new Error(`"${agentPath}" returned an error: ${stderr || "(no output)"}`)
+      throw new Error(
+        `"${agentPath}" failed: ${new TextDecoder().decode(out.stderr).trim() || "(no output)"}`,
+      )
     }
-    console.log(`✔ ${tool} CLI: ${new TextDecoder().decode(out.stdout).trim()}`)
+    const stdout = new TextDecoder().decode(out.stdout).trim()
+    if (!tool) {
+      const lower = (stdout + new TextDecoder().decode(out.stderr)).toLowerCase()
+      if (lower.includes("claude")) tool = "claude"
+      else if (lower.includes("cursor") || lower.includes("agent")) tool = "cursor"
+    }
+    if (!tool) {
+      throw new Error(
+        `Cannot detect tool type for "${agentPath}". Expected a Claude or Cursor CLI.`,
+      )
+    }
+    console.log(`✔ ${tool} CLI: ${stdout}`)
   } catch (err) {
     if (err instanceof Deno.errors.NotFound) {
       throw new Error(`Executable not found: "${agentPath}". Ensure it exists or is on PATH.`)
     }
     throw err
   }
+
+  const envName = tool === "claude" ? "ANTHROPIC_API_KEY" : "CURSOR_API_KEY"
+  const resolvedKey = key ?? Deno.env.get(envName)
+  if (!resolvedKey) throw new Error(`No API key provided. Pass --key <value> or set ${envName}.`)
 
   return { tool, resolvedKey }
 }
@@ -248,15 +229,12 @@ async function runAgent(
   all: FileEntry[],
   targets: FileEntry[],
 ): Promise<StageResult[]> {
-  const rawAgent = options.agent!
-  const resolved = resolve(Deno.cwd(), rawAgent)
-  const execPath = await pathExists(resolved) ? resolved : rawAgent
-
+  const resolved = resolve(Deno.cwd(), options.agent!)
+  const execPath = await exists(resolved) ? resolved : options.agent!
   const { tool, resolvedKey } = validateTool(execPath, options.key)
 
   const readme = all.find((e) => e.relativePath.toLowerCase() === "readme.md")
-  const configFull = resolve(base, options.configPath)
-  const configExists = await pathExists(configFull)
+  const configExists = await exists(resolve(base, options.configPath))
 
   const prompt = compilePrompt(
     base,
@@ -271,7 +249,32 @@ async function runAgent(
   const result = await executeAgent(tool, execPath, resolvedKey, prompt, base)
   console.log(`Agent returned results for ${result.files.length} file(s)`)
 
-  return await applyAgentResults(options, targets, result)
+  const lookup = new Map(targets.map((e) => [e.relativePath, e]))
+  const results: StageResult[] = []
+
+  for (const fr of result.files) {
+    const entry = lookup.get(fr.path)
+    if (!entry) {
+      if (options.verbose) console.log(`  ⚠ Unknown file from agent: ${fr.path}`)
+      continue
+    }
+    results.push(
+      await applyEntry(options, entry, {
+        title: fr.frontmatter.title,
+        slug: fr.frontmatter.slug || slugify(fr.frontmatter.title),
+        publish: fr.frontmatter.publish ?? true,
+        tags: fr.frontmatter.tags ?? [],
+        ...(fr.frontmatter.order !== undefined ? { order: fr.frontmatter.order } : {}),
+        ...(fr.frontmatter.collection ? { collection: fr.frontmatter.collection } : {}),
+      }, fr.fixHeading ?? false),
+    )
+    lookup.delete(fr.path)
+  }
+
+  for (const [, entry] of lookup) {
+    results.push({ path: entry.path, relativePath: entry.relativePath, action: "skipped" })
+  }
+  return results
 }
 
 export function compilePrompt(
@@ -281,21 +284,23 @@ export function compilePrompt(
   readmePath: string | undefined,
   configPath: string | undefined,
 ): string {
-  const fileList = targets.map((e) => `- ${e.relativePath}`).join("\n")
-
   const exampleBlock = examples.slice(0, 5).map((e) => {
     const end = e.raw.indexOf("---", 3)
-    const fm = end !== -1 ? e.raw.slice(0, end + 3) : ""
-    return `File: ${e.relativePath}\n${fm}`
+    return `File: ${e.relativePath}\n${end !== -1 ? e.raw.slice(0, end + 3) : ""}`
   }).join("\n\n")
 
-  return PROMPT_TEMPLATE
-    .replaceAll("{{BASE_PATH}}", base)
-    .replaceAll("{{README_PATH}}", readmePath ?? "(none)")
-    .replaceAll("{{CONFIG_PATH}}", configPath ?? "(none)")
-    .replaceAll("{{FILE_LIST}}", fileList)
-    .replaceAll("{{FILE_COUNT}}", String(targets.length))
-    .replaceAll("{{EXAMPLES}}", exampleBlock || "(no existing examples)")
+  const vars: Record<string, string> = {
+    "{{BASE_PATH}}": base,
+    "{{README_PATH}}": readmePath ?? "(none)",
+    "{{CONFIG_PATH}}": configPath ?? "(none)",
+    "{{FILE_LIST}}": targets.map((e) => `- ${e.relativePath}`).join("\n"),
+    "{{FILE_COUNT}}": String(targets.length),
+    "{{EXAMPLES}}": exampleBlock || "(no existing examples)",
+  }
+
+  let result = PROMPT_TEMPLATE
+  for (const [k, v] of Object.entries(vars)) result = result.replaceAll(k, v)
+  return result
 }
 
 async function executeAgent(
@@ -307,90 +312,41 @@ async function executeAgent(
 ): Promise<AgentResult> {
   const envKey = tool === "claude" ? "ANTHROPIC_API_KEY" : "CURSOR_API_KEY"
   const env = { ...Deno.env.toObject(), [envKey]: key }
+  const viaStdin = prompt.length > 20_000
+  const args = buildArgs(
+    tool,
+    viaStdin ? "Follow the detailed instructions from stdin. Return only valid JSON." : prompt,
+  )
 
-  const MAX_ARG = 20_000
-
-  if (prompt.length <= MAX_ARG) {
-    return await execDirect(tool, execPath, env, prompt, cwd)
-  }
-  return await execViaStdin(tool, execPath, env, prompt, cwd)
-}
-
-async function execDirect(
-  tool: Tool,
-  execPath: string,
-  env: Record<string, string>,
-  prompt: string,
-  cwd: string,
-): Promise<AgentResult> {
-  const args = buildArgs(tool, prompt)
-  console.log(`Running ${tool} agent...`)
+  console.log(`Running ${tool} agent${viaStdin ? " (prompt via stdin)" : ""}...`)
 
   const cmd = new Deno.Command(execPath, {
     args,
     cwd,
     env,
-    stdin: "null",
+    stdin: viaStdin ? "piped" : "null",
     stdout: "piped",
     stderr: "piped",
   })
 
-  const output = await cmd.output()
-  const stdout = new TextDecoder().decode(output.stdout)
-  const stderr = new TextDecoder().decode(output.stderr)
-
-  if (!output.success) {
-    throw new Error(`${tool} agent failed:\n${stderr || stdout}`)
-  }
-
-  return parseOutput(stdout)
-}
-
-async function execViaStdin(
-  tool: Tool,
-  execPath: string,
-  env: Record<string, string>,
-  prompt: string,
-  cwd: string,
-): Promise<AgentResult> {
-  const tmpFile = await Deno.makeTempFile({ prefix: "docs-mirror-stage-", suffix: ".md" })
-  await Deno.writeTextFile(tmpFile, prompt)
-
-  try {
-    const args = buildArgs(
-      tool,
-      "Follow the detailed instructions from stdin. Return only valid JSON.",
-    )
-    console.log(`Running ${tool} agent (prompt via stdin)...`)
-
-    const cmd = new Deno.Command(execPath, {
-      args,
-      cwd,
-      env,
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "piped",
-    })
-
+  let output: Deno.CommandOutput
+  if (viaStdin) {
     const proc = cmd.spawn()
     const writer = proc.stdin.getWriter()
     await writer.write(new TextEncoder().encode(prompt))
     await writer.close()
-    const output = await proc.output()
-
-    const stdout = new TextDecoder().decode(output.stdout)
-    const stderr = new TextDecoder().decode(output.stderr)
-
-    if (!output.success) {
-      throw new Error(`${tool} agent failed:\n${stderr || stdout}`)
-    }
-
-    return parseOutput(stdout)
-  } finally {
-    try {
-      await Deno.remove(tmpFile)
-    } catch { /* cleanup failure is fine */ }
+    output = await proc.output()
+  } else {
+    output = await cmd.output()
   }
+
+  const stdout = new TextDecoder().decode(output.stdout)
+  if (!output.success) {
+    throw new Error(
+      `${tool} agent failed:\n${new TextDecoder().decode(output.stderr) || stdout}`,
+    )
+  }
+  return parseOutput(stdout)
 }
 
 function buildArgs(tool: Tool, prompt: string): string[] {
@@ -411,9 +367,15 @@ function buildArgs(tool: Tool, prompt: string): string[] {
 }
 
 export function parseOutput(stdout: string): AgentResult {
+  const tryParse = (text: string): AgentResult | undefined => {
+    try {
+      const obj = JSON.parse(text)
+      if (obj.files && Array.isArray(obj.files)) return obj
+    } catch { /* not valid */ }
+  }
+
   try {
     const outer = JSON.parse(stdout)
-
     const content: string = typeof outer.result === "string"
       ? outer.result
       : typeof outer.message === "string"
@@ -421,14 +383,7 @@ export function parseOutput(stdout: string): AgentResult {
       : JSON.stringify(outer)
 
     const fenced = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
-    const raw = fenced ? fenced[1] : content
-
-    try {
-      const parsed = JSON.parse(raw)
-      if (parsed.files && Array.isArray(parsed.files)) return parsed
-    } catch { /* try deeper extraction */ }
-
-    return extractJson(content)
+    return tryParse(fenced ? fenced[1] : content) ?? extractJson(content)
   } catch {
     return extractJson(stdout)
   }
@@ -436,100 +391,21 @@ export function parseOutput(stdout: string): AgentResult {
 
 function extractJson(text: string): AgentResult {
   const idx = text.indexOf('{"files"')
-  if (idx === -1) {
-    throw new Error(
-      `Agent output does not contain the expected JSON structure.\nFirst 500 chars:\n${
-        text.slice(0, 500)
-      }`,
-    )
-  }
-
-  let depth = 0
-  for (let i = idx; i < text.length; i++) {
-    if (text[i] === "{") depth++
-    else if (text[i] === "}") {
-      depth--
-      if (depth === 0) {
-        const parsed = JSON.parse(text.slice(idx, i + 1))
-        if (parsed.files && Array.isArray(parsed.files)) return parsed
-        break
+  if (idx !== -1) {
+    let depth = 0
+    for (let i = idx; i < text.length; i++) {
+      if (text[i] === "{") depth++
+      else if (text[i] === "}") {
+        depth--
+        if (depth === 0) {
+          const parsed = JSON.parse(text.slice(idx, i + 1))
+          if (parsed.files && Array.isArray(parsed.files)) return parsed
+          break
+        }
       }
     }
   }
-
-  throw new Error(`Failed to parse agent JSON output.\nFirst 500 chars:\n${text.slice(0, 500)}`)
-}
-
-async function applyAgentResults(
-  options: StageOptions,
-  targets: FileEntry[],
-  result: AgentResult,
-): Promise<StageResult[]> {
-  const results: StageResult[] = []
-  const lookup = new Map(targets.map((e) => [e.relativePath, e]))
-
-  for (const fr of result.files) {
-    const entry = lookup.get(fr.path)
-    if (!entry) {
-      if (options.verbose) console.log(`  ⚠ Unknown file from agent: ${fr.path}`)
-      continue
-    }
-
-    const fields: Partial<Frontmatter> = {
-      title: fr.frontmatter.title,
-      slug: fr.frontmatter.slug || slugify(fr.frontmatter.title),
-      publish: fr.frontmatter.publish ?? true,
-      tags: fr.frontmatter.tags ?? [],
-    }
-    if (fr.frontmatter.order !== undefined) fields.order = fr.frontmatter.order
-    if (fr.frontmatter.collection) fields.collection = fr.frontmatter.collection
-
-    if (options.dryRun) {
-      console.log(`  [dry-run] ${entry.relativePath}: title="${fields.title}"`)
-      results.push({
-        path: entry.path,
-        relativePath: entry.relativePath,
-        action: "skipped",
-        frontmatter: fields,
-      })
-      continue
-    }
-
-    let raw = entry.raw
-    if (fr.fixHeading && !hasH1(entry.content)) {
-      raw = fixHeading(raw, fields.title ?? entry.frontmatter.title)
-    }
-
-    const updated = inject(raw, fields, entry.path)
-    if (updated !== entry.raw) {
-      await Deno.writeTextFile(entry.path, updated)
-      results.push({
-        path: entry.path,
-        relativePath: entry.relativePath,
-        action: entry.hasFrontmatter ? "merged" : "injected",
-        frontmatter: fields,
-      })
-    } else {
-      results.push({ path: entry.path, relativePath: entry.relativePath, action: "unchanged" })
-    }
-
-    lookup.delete(fr.path)
-  }
-
-  for (const [, entry] of lookup) {
-    results.push({ path: entry.path, relativePath: entry.relativePath, action: "skipped" })
-  }
-
-  return results
-}
-
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await Deno.stat(p)
-    return true
-  } catch {
-    return false
-  }
+  throw new Error(`Failed to parse agent JSON output.\n${text.slice(0, 500)}`)
 }
 
 const PROMPT_TEMPLATE =

@@ -63,10 +63,10 @@ export async function sync(options: SyncOptions): Promise<EngineResult[]> {
     const adapterName = adapterInstance.name
     const collection = mirror.collection ?? config.collection
 
-    const readme = findRootReadme(publishable)
+    const readme = publishable.find((f) => f.relativePath.toLowerCase() === "readme.md")
     const rootTitle = mirror.root_page ??
       readme?.frontmatter.title ??
-      inferRepoName(repoUrl) ??
+      repoUrl.match(/([^/]+)(?:\.git)?$/)?.[1] ??
       "Documentation"
 
     log(`\nSyncing to ${adapterName} (${collection})...`)
@@ -194,26 +194,13 @@ export async function sync(options: SyncOptions): Promise<EngineResult[]> {
   return results
 }
 
-function findRootReadme(files: DiscoveredFile[]): DiscoveredFile | undefined {
-  return files.find((f) => f.relativePath.toLowerCase() === "readme.md")
-}
-
-function inferRepoName(repoUrl: string): string | undefined {
-  const match = repoUrl.match(/([^/]+)(?:\.git)?$/)
-  return match?.[1]
-}
-
 function isReadme(filePath: string): boolean {
   return basename(filePath).toLowerCase() === "readme.md"
 }
 
 function findReadmeIn(dir: string, files: Map<string, DiscoveredFile>): DiscoveredFile | undefined {
-  const prefix = dir === "." ? "" : `${dir}/`
   for (const [path, file] of files) {
-    if (isReadme(path) && normDir(dirname(path)) === normDir(dir)) {
-      return file
-    }
-    void prefix
+    if (isReadme(path) && normDir(dirname(path)) === normDir(dir)) return file
   }
   return undefined
 }

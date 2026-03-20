@@ -739,20 +739,19 @@ async function runStage(global: GlobalFlags, args: string[]) {
   const results = await stage({
     basePath: flags.basePath,
     configPath: flags.configPath,
-    interactive: global.interactive,
     verbose: global.verbose,
     dryRun: flags.dryRun,
     agent: flags.agent,
     key: flags.key,
   })
 
-  const injected = results.filter((r) => r.action === "injected").length
-  const merged = results.filter((r) => r.action === "merged").length
-  const skipped = results.filter((r) => r.action === "skipped").length
-  const unchanged = results.filter((r) => r.action === "unchanged").length
-
+  const counts: Record<string, number> = {}
+  for (const r of results) counts[r.action] = (counts[r.action] ?? 0) + 1
+  const s = (k: string) => counts[k] ?? 0
   console.log(
-    `\n✔ Stage complete: ${injected} injected, ${merged} merged, ${skipped} skipped, ${unchanged} unchanged`,
+    `\n✔ Stage complete: ${s("injected")} injected, ${s("merged")} merged, ${
+      s("skipped")
+    } skipped, ${s("unchanged")} unchanged`,
   )
 }
 
