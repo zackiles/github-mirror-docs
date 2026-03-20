@@ -1,4 +1,4 @@
-import { assertEquals, assert } from "@std/assert"
+import { assert, assertEquals } from "@std/assert"
 import { join } from "@std/path"
 import { stringify as stringifyYaml } from "@std/yaml"
 import { sync } from "../src/engine.ts"
@@ -32,7 +32,11 @@ function startMockServer(port: number): {
     if (url.pathname === "/api/collections" && req.method === "GET") {
       const name = url.searchParams.get("name")
       if (collectionCreated || name === "test") {
-        return Response.json({ id: "col-1", url: `http://localhost:${port}/collections/col-1`, name })
+        return Response.json({
+          id: "col-1",
+          url: `http://localhost:${port}/collections/col-1`,
+          name,
+        })
       }
       return new Response("not found", { status: 404 })
     }
@@ -46,7 +50,12 @@ function startMockServer(port: number): {
       const slug = url.searchParams.get("slug")
       if (slug && pages.has(slug)) {
         const page = pages.get(slug)!
-        return Response.json({ id: page.id, url: `http://localhost:${port}/pages/${page.id}`, title: page.title, slug: page.slug })
+        return Response.json({
+          id: page.id,
+          url: `http://localhost:${port}/pages/${page.id}`,
+          title: page.title,
+          slug: page.slug,
+        })
       }
       return new Response("not found", { status: 404 })
     }
@@ -76,11 +85,13 @@ function startMockServer(port: number): {
 async function createTempRepo(port: number): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "docs-mirror-smoke-" })
 
-  for (const [args] of [
-    [["init"]],
-    [["config", "user.email", "test@test.com"]],
-    [["config", "user.name", "Test"]],
-  ] as [string[]][]) {
+  for (
+    const [args] of [
+      [["init"]],
+      [["config", "user.email", "test@test.com"]],
+      [["config", "user.name", "Test"]],
+    ] as [string[]][]
+  ) {
     const cmd = new Deno.Command("git", { args, cwd: dir, stdout: "null", stderr: "null" })
     await cmd.output()
   }
@@ -176,10 +187,23 @@ This should NOT be synced.
     content_format: "markdown",
     endpoints: {
       get_collection: { method: "GET", url: `${base}/api/collections?name={collection}` },
-      create_collection: { method: "POST", url: `${base}/api/collections`, body: '{ "name": "{collection}" }' },
+      create_collection: {
+        method: "POST",
+        url: `${base}/api/collections`,
+        body: '{ "name": "{collection}" }',
+      },
       get_page: { method: "GET", url: `${base}/api/pages?slug={slug}&collection={collection}` },
-      create_page: { method: "POST", url: `${base}/api/pages`, body: '{ "title": "{title}", "slug": "{slug}", "space": "{collection}", "parent": "{parent}", "body": "{content}", "tags": {tags} }' },
-      update_page: { method: "PUT", url: `${base}/api/pages/{page_id}`, body: '{ "title": "{title}", "body": "{content}", "tags": {tags} }' },
+      create_page: {
+        method: "POST",
+        url: `${base}/api/pages`,
+        body:
+          '{ "title": "{title}", "slug": "{slug}", "space": "{collection}", "parent": "{parent}", "body": "{content}", "tags": {tags} }',
+      },
+      update_page: {
+        method: "PUT",
+        url: `${base}/api/pages/{page_id}`,
+        body: '{ "title": "{title}", "body": "{content}", "tags": {tags} }',
+      },
       lock_page: { method: "", url: "", body: "" },
     },
     response: { id_path: "id", url_path: "url" },
@@ -190,7 +214,12 @@ This should NOT be synced.
   const config = {
     collection: "Smoke Test Docs",
     source: { include: ["README.md", "docs/**/*.md"], exclude: [] },
-    mirrors: [{ adapter: "webhook", template: join(dir, ".docs-mirror-webhook.yml"), banner: true, lock: false }],
+    mirrors: [{
+      adapter: "webhook",
+      template: join(dir, ".docs-mirror-webhook.yml"),
+      banner: true,
+      lock: false,
+    }],
   }
   await Deno.writeTextFile(join(dir, ".docs-mirror.yml"), stringifyYaml(config))
 
@@ -222,16 +251,22 @@ Deno.test({
       const failed = results[0].results.filter((r) => r.action === "failed")
 
       assertEquals(failed.length, 0, `No pages should fail: ${JSON.stringify(failed)}`)
-      assertEquals(created.length, 3, "Should create 3 pages (README, setup, api -- not draft)")
+      assertEquals(
+        created.length,
+        2,
+        "Should create 2 pages (setup, api -- README becomes root page, draft excluded)",
+      )
 
       const slugs = created.map((r) => r.slug).sort()
-      assertEquals(slugs, ["api-reference", "setup-guide", "test-project"])
+      assertEquals(slugs, ["api-reference", "setup-guide"])
 
       for (const r of created) {
         assert(r.url, `Created page ${r.slug} should have a URL`)
       }
 
-      const collectionGets = requests.filter((r) => r.method === "GET" && r.path.startsWith("/api/collections"))
+      const collectionGets = requests.filter((r) =>
+        r.method === "GET" && r.path.startsWith("/api/collections")
+      )
       assert(collectionGets.length >= 1, "Should have queried for collection")
 
       const pageCreates = requests.filter((r) => r.method === "POST" && r.path === "/api/pages")
@@ -244,6 +279,17 @@ Deno.test({
       assert(setupCreate, "Should have created setup-guide page")
       assert(setupCreate.body?.includes("Mirrored from GitHub"), "Page body should contain banner")
 
+      const setupBody = JSON.parse(setupCreate.body!)
+      assertEquals(
+        setupBody.parent,
+        "test-project",
+        "Pages should nest under root page (slug from README title)",
+      )
+
+      const rootPageCreate = pageCreates.find((r) =>
+        r.body?.includes("test-project") && r.body?.includes("Test Project")
+      )
+      assert(rootPageCreate, "Root page should be created with README content")
     } finally {
       Deno.chdir(origCwd)
       Deno.env.delete("WEBHOOK_TOKEN")
@@ -281,7 +327,6 @@ Deno.test({
       const allSkipped = results[0].results.every((r) => r.action === "skipped")
       assert(allSkipped, "All results should be 'skipped' in dry-run mode")
       assertEquals(results[0].results.length, 3, "Should report 3 files in dry-run")
-
     } finally {
       Deno.chdir(origCwd)
       Deno.env.delete("WEBHOOK_TOKEN")
@@ -320,13 +365,22 @@ Deno.test({
       const created = results2[0].results.filter((r) => r.action === "created")
       const failed = results2[0].results.filter((r) => r.action === "failed")
 
-      assertEquals(failed.length, 0, `No pages should fail on second sync: ${JSON.stringify(failed)}`)
+      assertEquals(
+        failed.length,
+        0,
+        `No pages should fail on second sync: ${JSON.stringify(failed)}`,
+      )
       assertEquals(created.length, 0, "Second sync should not create new pages")
-      assertEquals(updated.length, 3, "Second sync should update all 3 pages")
+      assertEquals(
+        updated.length,
+        2,
+        "Second sync should update 2 pages (README updates root page separately)",
+      )
 
-      const putRequests = requests.filter((r) => r.method === "PUT" && r.path.startsWith("/api/pages/"))
-      assert(putRequests.length >= 3, "Should have PUT requests for updates")
-
+      const putRequests = requests.filter((r) =>
+        r.method === "PUT" && r.path.startsWith("/api/pages/")
+      )
+      assert(putRequests.length >= 2, "Should have PUT requests for updates")
     } finally {
       Deno.chdir(origCwd)
       Deno.env.delete("WEBHOOK_TOKEN")

@@ -2,16 +2,48 @@
 
 docs-mirror uses YAML frontmatter in markdown files to control which pages are mirrored, where they go, and how they are ordered. Frontmatter lives at the top of each file between `---` delimiters.
 
-## Why frontmatter
+All fields are optional. docs-mirror follows **convention over configuration** — without any frontmatter at all, titles come from H1 headings, hierarchy comes from directory structure, and README.md files act as section index pages.
 
-Frontmatter lets you:
+## Hierarchy conventions
 
-- Override auto-generated titles and slugs
-- Exclude files from mirroring (`publish: false`)
-- Assign pages to different collections (Confluence Spaces, Linear Projects)
-- Nest pages under parents
-- Control sort order
-- Add tags
+docs-mirror infers page hierarchy from your file and folder structure:
+
+- **`README.md`** at the repository root becomes the **root page** in the mirror. Its content fills the top-level page that all other docs nest under. Its H1 heading (or frontmatter `title`) becomes the root page title.
+- **`docs/setup.md`** becomes a child of the root page.
+- **`docs/api/README.md`** becomes a section page — a child of the root page and the parent of everything else in `docs/api/`.
+- **`docs/api/endpoints.md`** becomes a child of `docs/api/README.md`.
+- If a directory has no README.md, its files become children of the nearest ancestor README (or the root page).
+
+This means a typical repository layout:
+
+```
+README.md
+docs/
+  getting-started.md
+  configuration.md
+  api/
+    README.md
+    endpoints.md
+    authentication.md
+  advanced/
+    pulumi.md
+    terraform.md
+```
+
+Produces this hierarchy in the mirror:
+
+```
+My Service (from README.md)
+  ├── Getting Started
+  ├── Configuration
+  ├── API (from docs/api/README.md)
+  │   ├── Endpoints
+  │   └── Authentication
+  ├── Pulumi
+  └── Terraform
+```
+
+No frontmatter is required for this to work.
 
 ## Example
 
@@ -36,13 +68,23 @@ Content here...
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `title` | Yes (auto) | From H1 or filename | Page title. Auto-generated if omitted. |
+| `title` | No | From H1 or filename | Page title. Auto-generated if omitted. |
 | `publish` | No | `true` | Set to `false` to exclude from mirroring. |
 | `collection` | No | Config default | Overrides the config collection for this file. |
-| `parent` | No | — | Slug of parent page for nesting. |
+| `parent` | No | Inferred from directory | Slug of parent page. Set to `false` to place at the collection root with no parent. |
 | `tags` | No | `[]` | Array of tags. Merged with config defaults. |
-| `order` | No | `999` | Numeric sort order (lower first). |
-| `slug` | No (auto) | From title | URL-safe identifier. Auto-generated if omitted. |
+| `order` | No | `999` | Numeric sort order among siblings (lower first). |
+| `slug` | No | From title | URL-safe identifier. Auto-generated if omitted. |
+
+## Parent field
+
+The `parent` field has three modes:
+
+| Value | Behavior |
+|-------|----------|
+| *(omitted)* | Parent is inferred from directory structure. Files nest under the README.md of their directory, or the nearest ancestor README, or the root page. |
+| `parent: "api-reference"` | Explicit override. The page becomes a child of the page with slug `api-reference`. |
+| `parent: false` | Opt out of auto-nesting. The page is placed at the collection root (Confluence space root, etc.) with no parent. |
 
 ## Auto-generation
 

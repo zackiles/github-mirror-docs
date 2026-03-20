@@ -44,8 +44,22 @@ collection: Engineering Docs
 mirrors:
   - adapter: confluence
     url: https://your-company.atlassian.net
+```
+
+That's the minimal config. docs-mirror will:
+
+- Create or find the "Engineering Docs" Space
+- Use your README.md as the root page (title from H1)
+- Infer hierarchy from your directory structure
+
+For more control:
+
+```yaml
+mirrors:
+  - adapter: confluence
+    url: https://your-company.atlassian.net
     collection: Engineering Docs
-    root_page: acme/my-service
+    root_page: My Service Docs
     lock: true
     banner: true
 ```
@@ -54,7 +68,7 @@ mirrors:
 |-------|-------------|
 | `url` | Confluence base URL. No trailing slash. |
 | `collection` | Space name. Created if it does not exist. |
-| `root_page` | Top-level page title. Defaults to `{org}/{repo}` from git remote. |
+| `root_page` | Top-level page title. Defaults to README.md title, then repo name. |
 | `lock` | Restrict editing to the sync user. Default `true`. |
 | `banner` | Add "Mirrored from GitHub" info macro. Default `true`. |
 
@@ -67,18 +81,31 @@ Your Confluence base URL is the domain you use to open Confluence:
 
 Use the root domain without `/wiki` in config. Example: `https://acme.atlassian.net`.
 
-## Collections and Spaces
+## How hierarchy maps to Confluence
 
-The `collection` in config maps to a Confluence Space. Each mirror can use a different collection. If the space does not exist, docs-mirror creates it with a key derived from the name (e.g. "Engineering Docs" → key "ENGINEERINGDOCS").
+docs-mirror creates a single sub-tree inside your Confluence Space. This means your mirrored docs occupy one branch of the page tree and never interfere with other content in the space.
 
-Per-file `collection` in frontmatter overrides the config for that file.
+```
+Space: Engineering Docs
+  ├── (other team pages, wikis, etc.)
+  └── My Service (root page — from README.md)
+        ├── Getting Started
+        ├── Configuration
+        ├── API (from docs/api/README.md)
+        │   ├── Endpoints
+        │   └── Authentication
+        ├── Pulumi
+        └── Terraform
+```
 
-## Page hierarchy
+**How it works:**
 
-- **Root page** — Created under the space with the title from `root_page`. All mirrored pages nest under it.
-- **Child pages** — Use `parent` in frontmatter to nest under another page. The parent value is the slug of the parent page.
+- Your repository's `README.md` content fills the **root page**. Its H1 heading becomes the root page title (unless overridden by `root_page` in config).
+- Directory structure determines parent-child nesting. A `README.md` inside a subdirectory becomes the section index for that directory.
+- Files without a directory README ancestor nest directly under the root page.
+- Frontmatter `parent` overrides the inferred hierarchy for any file.
 
-Example: A page with `parent: getting-started` becomes a child of the page with slug `getting-started`.
+**Safety:** docs-mirror only modifies pages it created. It marks every page with a `docs-mirror-slug` property. The root page is only updated if docs-mirror originally created it (checked via the marker property). Pages not managed by docs-mirror are never modified.
 
 ## Verification
 

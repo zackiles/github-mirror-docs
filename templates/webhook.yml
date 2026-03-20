@@ -17,6 +17,11 @@
 # Placeholders like {collection}, {slug}, {title}, {page_id} are replaced
 # at runtime with actual values from your config and frontmatter.
 #
+# The {remote_id} placeholder contains the tracked resource ID from a
+# previous sync (stored in .docs-mirror-state.json). This allows the
+# engine to update the correct resource even when titles, slugs, or file
+# paths change between syncs.
+#
 # ============================================================================
 
 # --- Authentication ---------------------------------------------------------
@@ -115,6 +120,28 @@ endpoints:
         "tags": {tags}
       }
     # Expected: 2xx on success.
+
+  # (Optional) Delete a page. Used when a source file is removed from the
+  # repository. Leave blank to skip automatic cleanup of orphaned pages.
+  delete_page:
+    method: ""
+    url: ""                            # e.g., DELETE https://cms.example.com/api/pages/{page_id}
+    body: ""
+
+  # (Optional) Move or rename a page. Called when a source file is renamed
+  # or relocated. If left blank, the engine falls back to delete + re-create.
+  #
+  # EXAMPLE — uncomment and adapt for your CMS:
+  #
+  # move_page:
+  #   method: PUT
+  #   url: "https://cms.example.com/api/pages/{remote_id}/move"
+  #   body: |
+  #     {
+  #       "slug": "{slug}",
+  #       "title": "{title}",
+  #       "parent": "{parent}"
+  #     }
 
   # (Optional) Lock a page from editing. Leave blank if unsupported.
   lock_page:

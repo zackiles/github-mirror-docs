@@ -1,4 +1,5 @@
 import type { Adapter, AdapterConfig, Page, SyncResult } from "./types.ts"
+import { SyncConflictError } from "./types.ts"
 import { toLinearMarkdown } from "../markdown.ts"
 import { contentHash } from "../engine.ts"
 
@@ -20,7 +21,9 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
     })
     const data = await res.json()
     if (data.errors?.length) {
-      throw new Error(`Linear API error: ${data.errors.map((e: { message: string }) => e.message).join(", ")}`)
+      throw new Error(
+        `Linear API error: ${data.errors.map((e: { message: string }) => e.message).join(", ")}`,
+      )
     }
     return data.data as T
   }
@@ -80,7 +83,11 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
       }
     },
 
-    async ensureRootPage(collection: string, title: string): Promise<{ id: string; slug: string }> {
+    async ensureRootPage(
+      collection: string,
+      title: string,
+      pageContent?: string,
+    ): Promise<{ id: string; slug: string }> {
       const project = await adapter.ensureCollection(collection)
       const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
 
@@ -97,9 +104,31 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
 
       const marker = `docs-mirror:slug=${slug}`
       const existing = data.documents.nodes.find((d) => d.content?.includes(marker))
-      if (existing) return { id: existing.id, slug }
+      if (existing) {
+        if (pageContent) {
+          const existingHashMatch = existing.content?.match(
+            /docs-mirror:slug=[^&]+&hash=([a-f0-9]+)/,
+          )
+          const newHash = await contentHash(pageContent)
+          if (existingHashMatch?.[1] !== newHash) {
+            const contentWithMarker =
+              `${pageContent}\n\n<!-- docs-mirror:slug=${slug}&hash=${newHash} -->`
+            await gql(
+              `mutation($id: String!, $title: String!, $content: String!) {
+                documentUpdate(id: $id, input: { title: $title, content: $content }) {
+                  document { id }
+                }
+              }`,
+              { id: existing.id, title, content: contentWithMarker },
+            )
+          }
+        }
+        return { id: existing.id, slug }
+      }
 
-      const content = `# ${title}\n\nRoot page for mirrored documentation.\n\n<!-- ${marker} -->`
+      const body = pageContent
+        ? `${pageContent}\n\n<!-- ${marker} -->`
+        : `# ${title}\n\nRoot page for mirrored documentation.\n\n<!-- ${marker} -->`
       const created = await gql<{
         documentCreate: { document: { id: string } }
       }>(
@@ -108,7 +137,7 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
             document { id }
           }
         }`,
-        { title, content, projectId: project.id },
+        { title, content: body, projectId: project.id },
       )
 
       return { id: created.documentCreate.document.id, slug }
@@ -140,12 +169,16 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
           const fullMarker = `<!-- docs-mirror:slug=${page.slug}&hash=${hash} -->`
           const contentWithMarker = `${page.content}\n\n${fullMarker}`
 
-          const existing = allDocs.documents.nodes.find((d) => d.content?.includes(marker))
+          const existing = page.remoteId
+            ? allDocs.documents.nodes.find((d) => d.id === page.remoteId)
+            : allDocs.documents.nodes.find((d) => d.content?.includes(marker))
 
           if (existing) {
-            const existingHashMatch = existing.content?.match(/docs-mirror:slug=[^&]+&hash=([a-f0-9]+)/)
+            const existingHashMatch = existing.content?.match(
+              /docs-mirror:slug=[^&]+&hash=([a-f0-9]+)/,
+            )
             if (existingHashMatch?.[1] === hash) {
-              results.push({ slug: page.slug, action: "skipped" })
+              results.push({ slug: page.slug, action: "skipped", id: existing.id })
               continue
             }
 
@@ -161,6 +194,7 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
             results.push({
               slug: page.slug,
               action: "updated",
+              id: existing.id,
               url: existing.url,
             })
           } else {
@@ -178,10 +212,12 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
             results.push({
               slug: page.slug,
               action: "created",
+              id: created.documentCreate.document.id,
               url: created.documentCreate.document.url,
             })
           }
         } catch (err) {
+          if (err instanceof SyncConflictError) throw err
           results.push({
             slug: page.slug,
             action: "failed",
@@ -191,6 +227,15 @@ export function createLinearAdapter(_config: AdapterConfig): Adapter {
       }
 
       return results
+    },
+
+    async delete(_collection: string, id: string): Promise<void> {
+      await gql(
+        `mutation($id: String!) {
+          documentDelete(id: $id) { success }
+        }`,
+        { id },
+      )
     },
 
     async lock(_collection: string, _slugs: string[]): Promise<void> {

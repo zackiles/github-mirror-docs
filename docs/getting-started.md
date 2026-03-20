@@ -5,27 +5,96 @@ docs-mirror keeps your GitHub repository as the source of truth for documentatio
 ## Prerequisites
 
 - A GitHub repository with markdown docs (e.g. `README.md`, `docs/**/*.md`)
-- Node.js and npm (for `npx`)
 - Accounts on the target platforms you want to mirror to (Confluence, Linear, etc.)
 
-## Step 1: Run init
+## Install and Setup
+
+The fastest path — install the binary and run init in one command from your repo directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/docs-mirror/docs-mirror/main/install.sh | sh -s -- init
+```
+
+You can pass flags directly to skip prompts:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/docs-mirror/docs-mirror/main/install.sh | sh -s -- init --confluence-url https://acme.atlassian.net
+```
+
+To install the binary without running init:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/docs-mirror/docs-mirror/main/install.sh | sh
+```
+
+Or use npx (requires Node.js):
 
 ```bash
 npx docs-mirror init
 ```
 
-The interactive setup walks you through:
+## What init does
 
-| Prompt | Description |
-|--------|-------------|
-| Configure Confluence mirror? (Y/n) | Add Confluence as a mirror. Answer `n` to skip. |
-| Configure Linear mirror? (Y/n) | Add Linear as a mirror. Answer `n` to skip. At least one adapter is required. |
-| Confluence base URL | Your Confluence instance URL (e.g. `https://acme.atlassian.net`). Shown only if Confluence is selected. |
-| Default collection name | Name for the Confluence Space or Linear Project (e.g. "Engineering Docs"). |
-| Exclude any paths from mirroring? | Glob pattern to exclude files, or leave blank. |
-| Add frontmatter to N files and create config? (Y/n) | Confirm to write changes. Answer `n` to abort. |
+The interactive setup detects your environment and walks you through configuration:
 
-## Step 2: Review generated files
+| Step | Description |
+|------|-------------|
+| Detect git repo | Reads the remote URL to derive `root_page` and collection defaults. |
+| Detect adapters | Infers adapters from flags and environment variables. If none found, prompts you. |
+| Validate credentials | Tests Confluence URL + credentials and Linear API key if available. |
+| Scan markdown | Finds `README.md` and `docs/**/*.md` and shows discovered titles. |
+| Add frontmatter | Injects or merges frontmatter (title, slug, publish, collection). |
+| Generate config | Creates `.docs-mirror.yml` and `.github/workflows/docs-mirror.yml`. |
+| Set GitHub secrets | If `gh` CLI is authenticated, offers to set secrets automatically. |
+
+Adapters are inferred from flags — no `--adapter` flag needed:
+
+```bash
+docs-mirror init --confluence-url https://acme.atlassian.net
+docs-mirror init --linear-api-key lin_api_xxx
+docs-mirror init --confluence-url https://acme.atlassian.net --linear-api-key lin_api_xxx
+```
+
+For fully non-interactive setup:
+
+```bash
+docs-mirror init --non-interactive --confluence-url https://acme.atlassian.net --collection "Engineering Docs"
+```
+
+## Credentials
+
+### From environment variables
+
+Set credentials in your shell or a `.env` file:
+
+```
+CONFLUENCE_EMAIL=you@company.com
+CONFLUENCE_TOKEN=your-api-token
+LINEAR_API_KEY=lin_api_...
+```
+
+### From CLI flags
+
+CLI flags override environment variables:
+
+```bash
+docs-mirror sync --confluence-email me@co.com --confluence-token tok123
+```
+
+### Via GitHub CLI
+
+If `gh` is installed and authenticated, init will offer to set GitHub Actions secrets automatically. No need to visit the GitHub settings UI.
+
+### Interactive credential setup
+
+If credentials are missing during interactive init, the CLI will:
+
+1. Check for the Atlassian CLI (`atlas`) and offer to help generate tokens
+2. Offer to open your browser to the API token creation page
+3. Let you enter credentials directly, saving them to `.env` for local development
+4. Offer to set them as GitHub Actions secrets via `gh` CLI
+
+## Review generated files
 
 After init, review:
 
@@ -33,9 +102,11 @@ After init, review:
 - **`.github/workflows/docs-mirror.yml`** — GitHub Action that runs sync on push to `main`
 - **Markdown files** — Frontmatter added or merged (title, slug, publish, collection)
 
-## Step 3: Add secrets to GitHub
+## Add secrets to GitHub
 
-In your repository: **Settings → Secrets and variables → Actions → New repository secret**
+If you didn't use the `gh` CLI to set secrets during init:
+
+**Settings → Secrets and variables → Actions → New repository secret**
 
 | Secret | Description |
 |--------|-------------|
@@ -45,7 +116,7 @@ In your repository: **Settings → Secrets and variables → Actions → New rep
 
 Add only the secrets for the adapters you configured.
 
-## Step 4: Commit and push to main
+## Commit and push
 
 ```bash
 git add .docs-mirror.yml .github/workflows/docs-mirror.yml README.md docs/
@@ -53,48 +124,41 @@ git commit -m "Add docs-mirror"
 git push origin main
 ```
 
-## Step 5: Verify sync ran
+## Verify
 
-Open **Actions** in your GitHub repository. The "Mirror Docs" workflow runs on pushes to `main` that touch `README.md`, `docs/**`, or `.docs-mirror.yml`. Check the run logs to confirm pages were created or updated.
+Open **Actions** in your GitHub repository. The "Mirror Docs" workflow runs on pushes to `main` that touch `README.md`, `docs/**`, or `.docs-mirror.yml`.
 
 ## Local sync
 
-Run sync locally to test or push changes without waiting for CI:
-
 ```bash
-npx docs-mirror sync
+docs-mirror sync
+docs-mirror sync --dry-run
+docs-mirror sync --confluence-email me@co.com --confluence-token tok123
 ```
 
-Options:
-
-| Option | Description |
-|--------|-------------|
-| `--dry-run` | Show what would happen without making changes |
-| `--adapter <name>` | Sync to a single adapter (`confluence`, `linear`, or `webhook`) |
-| `--config <path>` | Config file path (default: `.docs-mirror.yml`) |
-| `<file>` | Sync only the specified file(s) |
-
-For local sync, credentials come from environment variables or a `.env` file in the repo root. Ensure `.env` is in `.gitignore` (init adds it if missing). Example:
-
-```
-CONFLUENCE_EMAIL=you@company.com
-CONFLUENCE_TOKEN=your-api-token
-LINEAR_API_KEY=lin_api_...
-```
+Passing adapter-specific flags to sync automatically scopes the sync to that adapter.
 
 ## Uninstall
 
+Remove docs-mirror config from your repository:
+
 ```bash
-npx docs-mirror uninstall
+docs-mirror uninstall
 ```
 
-You will be prompted for:
+If `gh` CLI is available, you'll be offered the option to remove GitHub Actions secrets automatically.
 
-- Remove `.github/workflows/docs-mirror.yml`? (Y/n)
-- Remove `.docs-mirror.yml`? (Y/n)
-- Strip docs-mirror frontmatter from markdown files? (y/N)
+Non-interactive:
 
-After uninstall, manually remove GitHub Actions secrets and any mirrored pages in Confluence or Linear if desired.
+```bash
+docs-mirror uninstall --non-interactive --strip-frontmatter
+```
+
+To remove the docs-mirror binary from your system:
+
+```bash
+docs-mirror uninstall-binary
+```
 
 ## Next steps
 

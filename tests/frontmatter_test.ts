@@ -1,5 +1,5 @@
 import { assertEquals, assertStringIncludes } from "@std/assert"
-import { parse, inject, extractTitle, slugify, resolve } from "../src/frontmatter.ts"
+import { extractTitle, inject, parse, resolve, slugify } from "../src/frontmatter.ts"
 
 Deno.test("parse - extracts frontmatter from markdown with YAML header", () => {
   const raw = `---
@@ -83,4 +83,29 @@ title: "Existing Title"
   const result = inject(raw, { slug: "new-slug", tags: ["added"] }, "file.md")
   assertStringIncludes(result, "Existing Title")
   assertStringIncludes(result, "new-slug")
+})
+
+Deno.test("resolve - parent: false opts out of auto-parenting", () => {
+  const fm = resolve({ parent: false }, "# Doc\n\nBody", "file.md")
+  assertEquals(fm.parent, false)
+})
+
+Deno.test("resolve - parent: 'false' string opts out of auto-parenting", () => {
+  const fm = resolve({ parent: "false" }, "# Doc\n\nBody", "file.md")
+  assertEquals(fm.parent, false)
+})
+
+Deno.test("resolve - parent: '' empty string opts out of auto-parenting", () => {
+  const fm = resolve({ parent: "" }, "# Doc\n\nBody", "file.md")
+  assertEquals(fm.parent, false)
+})
+
+Deno.test("resolve - parent: 'API' is preserved as string", () => {
+  const fm = resolve({ parent: "API" }, "# Doc\n\nBody", "file.md")
+  assertEquals(fm.parent, "API")
+})
+
+Deno.test("resolve - parent undefined when not specified", () => {
+  const fm = resolve({}, "# Doc\n\nBody", "file.md")
+  assertEquals(fm.parent, undefined)
 })
