@@ -100,9 +100,5 @@ export function slugify(text: string): string {
 }
 
 function stripUndefined(obj: Record<string, unknown>): Record<string, unknown> {
-  const result: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(obj)) {
-    if (value !== undefined) result[key] = value
-  }
-  return result
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined))
 }
