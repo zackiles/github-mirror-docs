@@ -281,7 +281,12 @@ async function discoverFiles(
 
   for (const pattern of include) {
     for await (const entry of expandGlob(pattern, { root: cwd })) {
-      if (entry.isFile && entry.name.endsWith(".md") && !excluded.has(entry.path)) {
+      if (
+        entry.isFile &&
+        entry.name.endsWith(".md") &&
+        !excluded.has(entry.path) &&
+        !isUnderscored(relative(cwd, entry.path))
+      ) {
         files.push(entry.path)
       }
     }
@@ -294,6 +299,10 @@ async function resolveExplicitFiles(paths: string[], cwd: string): Promise<strin
   const resolved: string[] = []
   for (const p of paths) {
     const full = resolve(cwd, p)
+    if (isUnderscored(relative(cwd, full))) {
+      log(`Skipping underscored path: ${p}`)
+      continue
+    }
     try {
       await Deno.stat(full)
       resolved.push(full)
@@ -399,6 +408,10 @@ export async function contentHash(content: string): Promise<string> {
   const data = new TextEncoder().encode(content)
   const hash = await crypto.subtle.digest("SHA-256", data)
   return encodeHex(new Uint8Array(hash))
+}
+
+function isUnderscored(relativePath: string): boolean {
+  return relativePath.split("/").some((segment) => segment.startsWith("_"))
 }
 
 function detectRepoUrl(): string {

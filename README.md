@@ -97,6 +97,20 @@ tags: ["onboarding", "setup"]
 
 The `init` command adds this automatically. See [Frontmatter Reference](docs/frontmatter.md) for all fields.
 
+## Ignoring Files
+
+Any file or folder with a leading underscore (`_`) is automatically excluded from sync. No configuration needed — just prefix the name:
+
+```
+docs/
+  getting-started.md     ← synced
+  _drafts/               ← entire folder skipped
+    roadmap.md
+  _notes.md              ← skipped
+```
+
+For a single file that doesn't warrant renaming, set `publish: false` in its frontmatter instead.
+
 ## CLI
 
 ```bash
